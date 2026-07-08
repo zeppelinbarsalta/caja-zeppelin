@@ -717,7 +717,7 @@ function totalPersonal(d){
   let t = 0;
   CONFIG.staff.forEach(s=>{
     const p = d.personal[s.id];
-    if(p && p.trabajo) t += Number(s.jornal) || 0;
+    if(p && p.trabajo) t += (typeof p.jornal==='number' ? p.jornal : (Number(s.jornal)||0));
   });
   (d.personalExtra||[]).forEach(p=>{ if(p.trabajo!==false) t += Number(p.jornal)||0; });
   return t;
@@ -986,6 +986,7 @@ function denomRows(d, key){
     </div>`).join('');
 }
 function arqBadgeHTML(id, ok){ return `<span id="${id}" class="arq-badge ${ok?'arq-ok':'arq-falta'}">${ok?'\u2713 Arqueado':'Falta arqueo'}</span>`; }
+function arqColor(diff){ if(Math.abs(diff)<1) return 'var(--green)'; return diff<0 ? 'var(--red)' : 'var(--gold)'; }
 function cardCaja(d){
   const sugerida = cajaInicialSugerida(currentDate);
   const iniContada = denomsTotal(d.denomInicial);
@@ -1020,15 +1021,17 @@ function cardCaja(d){
           <div class="arq-head"><span class="arq-title">Arqueo de apertura <b class="obl">obligatorio</b></span>${arqBadgeHTML('arqIniBadge', !faltaIni)}</div>
           ${denomRows(d,'denomInicial')}
           <div class="subtotal-line"><span>Caja inicial contada</span><b class="mono" id="iniContado">${fmt(iniContada)}</b></div>
-          <div class="arq-diff"><span>Esperado (anoche): <b class="mono">${fmt(sugerida)}</b></span><span style="color:${Math.abs(difApertura)<1?'var(--green)':'var(--red)'}">Dif: <b class="mono" id="difApertura">${fmt(difApertura)}</b></span></div>
+          <div class="arq-diff"><span>Esperado (anoche): <b class="mono">${fmt(sugerida)}</b></span><span style="color:${arqColor(difApertura)}">Dif: <b class="mono" id="difApertura">${fmt(difApertura)}</b></span></div>
         </div>
         <div class="arq-block">
           <div class="arq-head"><span class="arq-title">Arqueo de cierre <b class="obl">obligatorio</b></span>${arqBadgeHTML('arqCierreBadge', !faltaCierre)}</div>
           ${denomRows(d,'denomCierre')}
           <div class="subtotal-line"><span>Caja de cierre contada</span><b class="mono" id="cierreContado">${fmt(cierreContado)}</b></div>
-          <div class="arq-diff"><span>Diferencia de cierre</span><span style="color:${Math.abs(difCierre)<1?'var(--green)':'var(--red)'}"><b class="mono" id="difCierre">${fmt(difCierre)}</b></span></div>
+          <div class="arq-diff"><span>Diferencia de cierre</span><span style="color:${arqColor(difCierre)}"><b class="mono" id="difCierre">${fmt(difCierre)}</b></span></div>
         </div>
       </div>
+      <button class="add-btn" id="calcEfec" style="margin-top:12px">↺ Calcular efectivo de ventas por arqueo</button>
+      <p class="cash-hint">Ventas en efectivo = <b>cierre contado − apertura contada + gastos en efectivo + retiros</b>. Completá primero los dos arqueos. Usalo si no registrás las ventas en efectivo una por una: llena el campo Efectivo de Ingresos.</p>
     </div>
   </div>`;
 }
@@ -1161,6 +1164,7 @@ function bindHoyEvents(d){
       const id = el.dataset.chk;
       if(!d.personal[id]) d.personal[id] = {trabajo:false};
       d.personal[id].trabajo = !d.personal[id].trabajo;
+      if(d.personal[id].trabajo){ const s = CONFIG.staff.find(x=>x.id===id); d.personal[id].jornal = Number(s && s.jornal) || 0; }
       saveDays();
       const on = d.personal[id].trabajo;
       el.classList.toggle('on', on);
@@ -1172,6 +1176,15 @@ function bindHoyEvents(d){
   // caja / arqueo
   const cr = document.getElementById('cajaRetiros');
   if(cr) cr.addEventListener('input', ()=>{ d.caja.retiros = parseNum(cr.value)||0; saveDays(); refreshCaja(d); });
+  const calcBtn = document.getElementById('calcEfec');
+  if(calcBtn) calcBtn.addEventListener('click', ()=>{
+    const iniC = denomsTotal(d.denomInicial), cieC = denomsTotal(d.denomCierre);
+    if(iniC<=0 || cieC<=0){ showToast('Completá los dos arqueos primero'); return; }
+    const gastosEf = efectivoMov(d).gasto, ret = Number(d.caja.retiros)||0;
+    const ventasEf = Math.max(0, cieC - iniC + gastosEf + ret);
+    d.ingresos.efectivo = ventasEf; saveDays();
+    showToast('Efectivo de ventas: ' + fmt(ventasEf)); renderHoy();
+  });
 
   main.querySelectorAll('[data-denomkey]').forEach(el=>{
     el.addEventListener('input', ()=>{
@@ -1201,10 +1214,10 @@ function refreshCaja(d){
   const difC = cierre - esp;
   const set = (id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent = txt; };
   set('iniContado', fmt(ini));
-  const dA = document.getElementById('difApertura'); if(dA){ dA.textContent = fmt(difA); dA.parentElement.style.color = Math.abs(difA)<1?'var(--green)':'var(--red)'; }
+  const dA = document.getElementById('difApertura'); if(dA){ dA.textContent = fmt(difA); dA.parentElement.style.color = arqColor(difA); }
   set('cajaFinalCalc', fmt(esp));
   set('cierreContado', fmt(cierre));
-  const dC = document.getElementById('difCierre'); if(dC){ dC.textContent = fmt(difC); dC.parentElement.style.color = Math.abs(difC)<1?'var(--green)':'var(--red)'; }
+  const dC = document.getElementById('difCierre'); if(dC){ dC.textContent = fmt(difC); dC.parentElement.style.color = arqColor(difC); }
   const em = efectivoMov(d);
   const ro = document.getElementById('cajaEfectivoRO'); if(ro) ro.textContent = fmt((Number(d.ingresos.efectivo)||0)+em.ingExtra);
   const ge = document.getElementById('cajaGastosEfectivo'); if(ge) ge.textContent = (em.gasto>0?'\u2212':'')+fmt(em.gasto);
