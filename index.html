@@ -71,6 +71,12 @@
   }
   .hoy-strip{display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
   .hoy-strip > .card{margin-bottom:0}
+  .transf-list{display:flex;flex-direction:column;gap:7px;margin-bottom:8px}
+  .transf-row{display:flex;align-items:center;gap:8px}
+  .transf-row input{flex:1}
+  .transf-meta{display:flex;flex-direction:column;justify-content:center;min-width:60px;flex:0 0 auto;line-height:1.2}
+  .transf-hora{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted)}
+  .transf-user{font-size:10px;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px}
   .card-head-left{display:flex;align-items:center;gap:10px}
   .card-ico{font-size:17px;width:24px;text-align:center}
   .card-title{font-size:14px;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
@@ -636,7 +642,8 @@ function blankDay(){
     denomInicial: {},
     denomCierre: {},
     notas: '',
-    movimientos: []
+    movimientos: [],
+    transferencias: []
   };
 }
 
@@ -656,6 +663,8 @@ function getDay(dateStr){
   if(!d.denomInicial) d.denomInicial = {};
   if(!d.denomCierre) d.denomCierre = {};
   if(!d.movimientos) d.movimientos = [];
+  if(!Array.isArray(d.transferencias)) d.transferencias = [];
+  d.transferencias = d.transferencias.map(t => (t && typeof t==='object') ? {monto:Number(t.monto)||0, hora:t.hora||'', usuario:t.usuario||''} : {monto:Number(t)||0, hora:'', usuario:''});
   return d;
 }
 
@@ -747,7 +756,7 @@ let currentTab = 'hoy';
 let currentDate = todayStr();
 let currentMonth = currentDate.slice(0,7);
 let equipoSeg = 'personal';
-let openCards = {gastos:true, merc:true, mant:false, imp:false, extra:false, pers:false, caja:false, ing:true};
+let openCards = {gastos:true, merc:true, mant:false, imp:false, extra:false, pers:false, caja:false, ing:true, transf:false};
 
 /* ============================ RENDER: HOY ============================ */
 function catColor(g){ return ({mercaderia:'var(--orange)',mantenimiento:'var(--gold)',impuestos:'#E74C3C',extras:'#9B59B6',personal:'#27AE60'})[g] || 'var(--muted)'; }
@@ -824,6 +833,7 @@ function renderHoy(){
 
     <div class="hoy-strip">
       ${cardIngresos(d)}
+      ${cardTransferencias(d)}
       ${cardGastos(d)}
       ${cardCaja(d)}
       ${cardPersonal(d)}
@@ -834,6 +844,34 @@ function renderHoy(){
   formatAllNumInputs(main);
 }
 
+function cardTransferencias(d){
+  if(!d.transferencias) d.transferencias = [];
+  const list = d.transferencias;
+  const total = list.reduce((a,t)=>a+(Number(t.monto)||0),0);
+  return `
+  <div class="card ${openCards.transf?'open':''}" data-card="transf">
+    <div class="card-head">
+      <div class="card-head-left"><span class="card-ico">🏦</span><span class="card-title">Transferencias recibidas</span></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="card-total mono" style="color:var(--gold)">${fmt(total)}</span>
+        <span class="card-chev">▾</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <p class="cash-hint">Cargá cada transferencia por separado. La suma va sola a <b>Ingresos › Transferencia</b>.</p>
+      <div class="transf-list">
+        ${list.map((t,i)=>`
+          <div class="transf-row">
+            <div class="transf-meta"><span class="transf-hora">${escAttr(t.hora||'—')}</span>${t.usuario?`<span class="transf-user">${escAttr(t.usuario)}</span>`:''}</div>
+            <input type="text" inputmode="numeric" class="mov-in" data-transf="${i}" value="${t.monto||''}" placeholder="Monto" style="text-align:right;margin-bottom:0">
+            <button class="del" data-deltransf="${i}">✕</button>
+          </div>`).join('')}
+        ${list.length===0 ? '<div class="empty" style="padding:8px 0">Sin transferencias cargadas</div>' : ''}
+      </div>
+      <button class="add-btn" id="addTransf" style="margin-top:8px">+ Agregar transferencia</button>
+    </div>
+  </div>`;
+}
 function cardIngresos(d){
   const fields = [['efectivo','Efectivo'],['tarjeta','Tarjeta / cuenta'],['transferencia','Transferencia'],['mercadoPago','Mercado Pago'],['puerta','Puerta (cover)']];
   return `
@@ -849,8 +887,8 @@ function cardIngresos(d){
       <div class="ing-grid">
       ${fields.map(([key,label])=>`
         <div class="row">
-          <div class="row-label">${label}</div>
-          <input type="text" inputmode="numeric" data-group="ingresos" data-key="${key}" value="${d.ingresos[key]||''}" placeholder="0">
+          <div class="row-label">${label}${key==='transferencia'?' <span class="row-sub">(panel Transferencias)</span>':''}</div>
+          <input type="text" inputmode="numeric" data-group="ingresos" data-key="${key}" value="${d.ingresos[key]||''}" placeholder="0"${key==='transferencia'?' disabled style="opacity:.6"':''}>
         </div>
       `).join('')}
       </div>
@@ -1184,6 +1222,30 @@ function bindHoyEvents(d){
     const ventasEf = Math.max(0, cieC - iniC + gastosEf + ret);
     d.ingresos.efectivo = ventasEf; saveDays();
     showToast('Efectivo de ventas: ' + fmt(ventasEf)); renderHoy();
+  });
+
+  // transferencias recibidas
+  main.querySelectorAll('[data-transf]').forEach(el=>{
+    el.addEventListener('input', ()=>{
+      d.transferencias[+el.dataset.transf].monto = parseNum(el.value);
+      const sum = d.transferencias.reduce((a,t)=>a+(Number(t.monto)||0),0);
+      d.ingresos.transferencia = sum; saveDays();
+      const ct = main.querySelector('[data-card="transf"] .card-total'); if(ct) ct.textContent = fmt(sum);
+      const ti = main.querySelector('[data-group="ingresos"][data-key="transferencia"]'); if(ti) ti.value = sum ? Number(sum).toLocaleString('es-AR') : '';
+      const ic = main.querySelector('[data-card="ing"] .card-total'); if(ic) ic.textContent = fmt(totalIngresos(d));
+      refreshBanner(d);
+    });
+  });
+  main.querySelectorAll('[data-deltransf]').forEach(btn=>btn.addEventListener('click', ()=>{
+    d.transferencias.splice(+btn.dataset.deltransf,1);
+    d.ingresos.transferencia = d.transferencias.reduce((a,t)=>a+(Number(t.monto)||0),0);
+    saveDays(); openCards.transf=true; renderHoy();
+  }));
+  const addTr = document.getElementById('addTransf');
+  if(addTr) addTr.addEventListener('click', ()=>{
+    const hora = new Date().toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit', hour12:false});
+    d.transferencias.push({monto:0, hora, usuario: currentUser ? currentUser.name : ''});
+    saveDays(); openCards.transf=true; renderHoy();
   });
 
   main.querySelectorAll('[data-denomkey]').forEach(el=>{
