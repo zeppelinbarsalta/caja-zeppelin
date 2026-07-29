@@ -74,6 +74,17 @@
   .transf-list{display:flex;flex-direction:column;gap:7px;margin-bottom:8px}
   .transf-row{display:flex;align-items:center;gap:8px}
   .transf-row input{flex:1}
+  .transf-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .transf-col{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px}
+  .transf-col-name{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;font-weight:600;margin-bottom:8px}
+  .transf-subtotal{font-size:12px;color:var(--muted);text-align:right;margin-top:8px;border-top:1px solid var(--border);padding-top:6px}
+  @media(max-width:520px){ .transf-cols{grid-template-columns:1fr} }
+  .asis-row{padding:9px 0;border-bottom:1px solid var(--border)}
+  .asis-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .asis-name{font-size:14px}
+  .asis-role{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+  .asis-count{font-size:13px;color:var(--gold)}
+  .asis-days{font-size:11px;color:var(--muted);margin-top:3px;font-family:'JetBrains Mono',monospace;line-height:1.6}
   .transf-meta{display:flex;flex-direction:column;justify-content:center;min-width:60px;flex:0 0 auto;line-height:1.2}
   .transf-hora{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted)}
   .transf-user{font-size:10px;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px}
@@ -564,6 +575,7 @@ let CTAS = loadJSON(LS_CTAS, []);
 
 // migracion: asegurar formasPago
 if(!CONFIG.formasPago){ CONFIG.formasPago = ["Efectivo","Transferencia","Tarjeta","Mercado Pago","Cta. Cte."]; saveJSON(LS_CONFIG, CONFIG); }
+if(!Array.isArray(CONFIG.transfCols) || CONFIG.transfCols.length<2){ CONFIG.transfCols = ["",""]; saveJSON(LS_CONFIG, CONFIG); }
 ["Sueldos","Adelanto de sueldo","Alquiler"].forEach(c=>{ if(CONFIG.impuestos && !CONFIG.impuestos.includes(c)) CONFIG.impuestos.unshift(c); });
 if(!CONFIG.impBucket) CONFIG.impBucket = {};
 (CONFIG.impuestos||[]).forEach(n=>{ if(CONFIG.impBucket[n]==null) CONFIG.impBucket[n] = LABOR_TAGGED_IMPUESTOS.includes(n) ? 'LABOR' : 'FIJO'; });
@@ -664,7 +676,7 @@ function getDay(dateStr){
   if(!d.denomCierre) d.denomCierre = {};
   if(!d.movimientos) d.movimientos = [];
   if(!Array.isArray(d.transferencias)) d.transferencias = [];
-  d.transferencias = d.transferencias.map(t => (t && typeof t==='object') ? {monto:Number(t.monto)||0, hora:t.hora||'', usuario:t.usuario||''} : {monto:Number(t)||0, hora:'', usuario:''});
+  d.transferencias = d.transferencias.map(t => (t && typeof t==='object') ? {monto:Number(t.monto)||0, hora:t.hora||'', usuario:t.usuario||'', col:(t.col===1?1:0)} : {monto:Number(t)||0, hora:'', usuario:'', col:0});
   return d;
 }
 
@@ -847,7 +859,28 @@ function renderHoy(){
 function cardTransferencias(d){
   if(!d.transferencias) d.transferencias = [];
   const list = d.transferencias;
+  const names = (Array.isArray(CONFIG.transfCols)&&CONFIG.transfCols.length>=2) ? CONFIG.transfCols : ['',''];
   const total = list.reduce((a,t)=>a+(Number(t.monto)||0),0);
+  const subtotal = c => list.reduce((a,t)=>a+((t.col||0)===c?(Number(t.monto)||0):0),0);
+  const rowHtml = (t,i)=>`
+    <div class="transf-row">
+      <div class="transf-meta"><span class="transf-hora">${escAttr(t.hora||'—')}</span>${t.usuario?`<span class="transf-user">${escAttr(t.usuario)}</span>`:''}</div>
+      <input type="text" inputmode="numeric" class="mov-in" data-transf="${i}" value="${t.monto||''}" placeholder="Monto" style="text-align:right;margin-bottom:0">
+      <button class="del" data-deltransf="${i}">✕</button>
+    </div>`;
+  const colHtml = c => {
+    const rows = list.map((t,i)=>({t,i})).filter(x=>(x.t.col||0)===c);
+    return `
+    <div class="transf-col">
+      <input class="transf-col-name" data-transfname="${c}" value="${escAttr(names[c]||'')}" placeholder="Cobrador ${c+1}">
+      <div class="transf-list">
+        ${rows.map(x=>rowHtml(x.t,x.i)).join('')}
+        ${rows.length===0?'<div class="empty" style="padding:8px 0;font-size:12px">Sin cargas</div>':''}
+      </div>
+      <button class="add-btn" data-addtransf="${c}">+ Agregar</button>
+      <div class="transf-subtotal">Subtotal <b class="mono" data-subtotal="${c}">${fmt(subtotal(c))}</b></div>
+    </div>`;
+  };
   return `
   <div class="card ${openCards.transf?'open':''}" data-card="transf">
     <div class="card-head">
@@ -858,17 +891,8 @@ function cardTransferencias(d){
       </div>
     </div>
     <div class="card-body">
-      <p class="cash-hint">Cargá cada transferencia por separado. La suma va sola a <b>Ingresos › Transferencia</b>.</p>
-      <div class="transf-list">
-        ${list.map((t,i)=>`
-          <div class="transf-row">
-            <div class="transf-meta"><span class="transf-hora">${escAttr(t.hora||'—')}</span>${t.usuario?`<span class="transf-user">${escAttr(t.usuario)}</span>`:''}</div>
-            <input type="text" inputmode="numeric" class="mov-in" data-transf="${i}" value="${t.monto||''}" placeholder="Monto" style="text-align:right;margin-bottom:0">
-            <button class="del" data-deltransf="${i}">✕</button>
-          </div>`).join('')}
-        ${list.length===0 ? '<div class="empty" style="padding:8px 0">Sin transferencias cargadas</div>' : ''}
-      </div>
-      <button class="add-btn" id="addTransf" style="margin-top:8px">+ Agregar transferencia</button>
+      <p class="cash-hint">Una columna por cobrador. Cada carga guarda hora y usuario. La suma de las dos va a <b>Ingresos › Transferencia</b>.</p>
+      <div class="transf-cols">${colHtml(0)}${colHtml(1)}</div>
     </div>
   </div>`;
 }
@@ -1233,6 +1257,7 @@ function bindHoyEvents(d){
       const ct = main.querySelector('[data-card="transf"] .card-total'); if(ct) ct.textContent = fmt(sum);
       const ti = main.querySelector('[data-group="ingresos"][data-key="transferencia"]'); if(ti) ti.value = sum ? Number(sum).toLocaleString('es-AR') : '';
       const ic = main.querySelector('[data-card="ing"] .card-total'); if(ic) ic.textContent = fmt(totalIngresos(d));
+      [0,1].forEach(c=>{ const sb=main.querySelector('[data-subtotal="'+c+'"]'); if(sb) sb.textContent = fmt(d.transferencias.reduce((a,t)=>a+((t.col||0)===c?(Number(t.monto)||0):0),0)); });
       refreshBanner(d);
     });
   });
@@ -1241,15 +1266,17 @@ function bindHoyEvents(d){
     d.ingresos.transferencia = d.transferencias.reduce((a,t)=>a+(Number(t.monto)||0),0);
     saveDays(); openCards.transf=true; renderHoy();
   }));
-  const addTr = document.getElementById('addTransf');
-  const nuevaTransf = ()=>{
+  const nuevaTransf = (c)=>{
     const hora = new Date().toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit', hour12:false});
-    d.transferencias.push({monto:0, hora, usuario: currentUser ? currentUser.name : ''});
+    d.transferencias.push({monto:0, hora, usuario: currentUser ? currentUser.name : '', col: c});
+    d.ingresos.transferencia = d.transferencias.reduce((a,t)=>a+(Number(t.monto)||0),0);
     saveDays(); openCards.transf=true; renderHoy();
-    const ins = main.querySelectorAll('[data-transf]'); if(ins.length) ins[ins.length-1].focus();
+    const ins = [...main.querySelectorAll('[data-transf]')].filter(el=>(d.transferencias[+el.dataset.transf].col||0)===c);
+    if(ins.length) ins[ins.length-1].focus();
   };
-  if(addTr) addTr.addEventListener('click', nuevaTransf);
-  main.querySelectorAll('[data-transf]').forEach(el=>el.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); nuevaTransf(); } }));
+  main.querySelectorAll('[data-addtransf]').forEach(btn=>btn.addEventListener('click', ()=>nuevaTransf(+btn.dataset.addtransf)));
+  main.querySelectorAll('[data-transf]').forEach(el=>el.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); nuevaTransf(d.transferencias[+el.dataset.transf].col||0); } }));
+  main.querySelectorAll('[data-transfname]').forEach(el=>el.addEventListener('input', ()=>{ if(!Array.isArray(CONFIG.transfCols)||CONFIG.transfCols.length<2) CONFIG.transfCols=['','']; CONFIG.transfCols[+el.dataset.transfname]=el.value; saveConfig(); }));
   // Enter en el monto de gastos -> Agregar
   const gMontoEl = document.getElementById('gMonto');
   if(gMontoEl) gMontoEl.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const gA=document.getElementById('gAdd'); if(gA) gA.click(); } });
@@ -1448,6 +1475,20 @@ function renderResumen(){
       <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px">Gastos por categoría</h3>
       ${donutChart(catData)}
     </div>
+
+    ${(function(){
+      const asis = (CONFIG.staff||[]).map(s=>{
+        const dias=[]; keys.forEach(k=>{ const dd=DAYS[k]; if(dd && dd.personal && dd.personal[s.id] && dd.personal[s.id].trabajo) dias.push(k.split('-')[2]); });
+        return {name:s.name, role:s.role, count:dias.length, dias};
+      }).filter(r=>r.count>0).sort((a,b)=>b.count-a.count);
+      if(!asis.length) return '';
+      return `<div class="breakdown"><h3>Asistencia del personal · ${monthLabel(currentMonth)}</h3>
+        ${asis.map(r=>`<div class="asis-row">
+          <div class="asis-top"><span class="asis-name">${escAttr(r.name||'—')}${r.role?` <span class="asis-role">${escAttr(r.role)}</span>`:''}</span><span class="asis-count mono">${r.count} día${r.count===1?'':'s'}</span></div>
+          <div class="asis-days">${r.dias.join(' · ')}</div>
+        </div>`).join('')}
+      </div>`;
+    })()}
 
     <div class="breakdown">
       <h3>Cuentas corrientes</h3>
