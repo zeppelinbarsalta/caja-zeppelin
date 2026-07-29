@@ -1242,11 +1242,19 @@ function bindHoyEvents(d){
     saveDays(); openCards.transf=true; renderHoy();
   }));
   const addTr = document.getElementById('addTransf');
-  if(addTr) addTr.addEventListener('click', ()=>{
+  const nuevaTransf = ()=>{
     const hora = new Date().toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit', hour12:false});
     d.transferencias.push({monto:0, hora, usuario: currentUser ? currentUser.name : ''});
     saveDays(); openCards.transf=true; renderHoy();
-  });
+    const ins = main.querySelectorAll('[data-transf]'); if(ins.length) ins[ins.length-1].focus();
+  };
+  if(addTr) addTr.addEventListener('click', nuevaTransf);
+  main.querySelectorAll('[data-transf]').forEach(el=>el.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); nuevaTransf(); } }));
+  // Enter en el monto de gastos -> Agregar
+  const gMontoEl = document.getElementById('gMonto');
+  if(gMontoEl) gMontoEl.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const gA=document.getElementById('gAdd'); if(gA) gA.click(); } });
+  const gOtroEl = document.getElementById('gConceptoOtro');
+  if(gOtroEl) gOtroEl.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const gm=document.getElementById('gMonto'); if(gm) gm.focus(); } });
 
   main.querySelectorAll('[data-denomkey]').forEach(el=>{
     el.addEventListener('input', ()=>{
@@ -1361,7 +1369,7 @@ function renderResumen(){
   const maxCat = Math.max(cMerc,cMant,cImp,cExt,cPers,1);
 
   // indicadores adicionales
-  const noches = list.length;
+  const noches = list.filter(x=>totalIngresos(x)>0).length;
   const ventaProm = noches ? ing/noches : 0;
   const mejorNoche = list.reduce((b,d)=>Math.max(b, totalIngresos(d)), 0);
   const margen = ing>0 ? res/ing : 0;
@@ -1975,7 +1983,7 @@ function monthAgg(ym){
       if(b==='COGS') cogs+=v; else if(b==='LABOR') labor+=v; else if(b==='FIJO') fijo+=v; else if(b!=='EXCL') varOp+=v;
     });
   });
-  return { ventas, cogs, labor, fijo, varOp, nd: list.length };
+  return { ventas, cogs, labor, fijo, varOp, nd: list.filter(x=>totalIngresos(x)>0).length };
 }
 function costBreakdown(a){
   const ventas=a.ventas, cogs=a.cogs, labor=a.labor, fijo=a.fijo, varOp=a.varOp;
