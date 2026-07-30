@@ -1405,6 +1405,26 @@ function lineChart(points){
     ${dots}${labels}
   </svg>`;
 }
+function exportAsistencia(ym){
+  const p = ym.split('-').map(Number);
+  const nDays = new Date(p[0], p[1], 0).getDate();
+  const WD = ['D','L','M','X','J','V','S'];
+  const rowDia = ['', ''], rowNum = ['Empleado', 'Rol'];
+  for(let i=1;i<=nDays;i++){ const wd=new Date(p[0],p[1]-1,i).getDay(); rowDia.push(WD[wd]); rowNum.push(i); }
+  rowDia.push(''); rowNum.push('Total dias');
+  const aoa = [rowDia, rowNum];
+  (CONFIG.staff||[]).forEach(s=>{
+    const row = [s.name||'', s.role||'']; let count=0;
+    for(let i=1;i<=nDays;i++){ const k = ym+'-'+String(i).padStart(2,'0'); const dd=DAYS[k]; const on = dd && dd.personal && dd.personal[s.id] && dd.personal[s.id].trabajo; row.push(on?'X':''); if(on) count++; }
+    row.push(count);
+    aoa.push(row);
+  });
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:20},{wch:12}].concat(Array(nDays).fill({wch:3.5})).concat([{wch:10}]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Asistencia');
+  XLSX.writeFile(wb, 'Asistencia_' + ym + '.xlsx');
+}
 function renderResumen(){
   const keys = daysInMonth(currentMonth);
   const list = keys.map(k=>getDay(k)).filter(dayHasData);
@@ -1495,19 +1515,22 @@ function renderResumen(){
     </div>
 
     ${(function(){
-      const opDays = keys.filter(k=>{ const dd=DAYS[k]; return dd && (totalIngresos(dd)>0 || (dd.personal && Object.values(dd.personal).some(p=>p&&p.trabajo))); });
       const staff = (CONFIG.staff||[]);
-      if(!staff.length || !opDays.length) return '';
+      if(!staff.length) return '';
+      const _p = currentMonth.split('-').map(Number);
+      const nDays = new Date(_p[0], _p[1], 0).getDate();
       const WD = ['D','L','M','X','J','V','S'];
-      const meta = opDays.map(k=>{ const p=k.split('-').map(Number); const wd=new Date(p[0],p[1]-1,p[2]).getDay(); return {k, dn:p[2], wd:WD[wd], wknd:(wd===0||wd===6)}; });
-      const rows = staff.map(s=>{ let count=0; opDays.forEach(k=>{ const dd=DAYS[k]; if(dd.personal && dd.personal[s.id] && dd.personal[s.id].trabajo) count++; }); return {s, count}; }).sort((a,b)=>b.count-a.count);
+      const meta = [];
+      for(let i=1;i<=nDays;i++){ const k = currentMonth+'-'+String(i).padStart(2,'0'); const wd=new Date(_p[0],_p[1]-1,i).getDay(); meta.push({k, dn:i, wd:WD[wd], wknd:(wd===0||wd===6)}); }
+      const rows = staff.map(s=>{ let count=0; meta.forEach(m=>{ const dd=DAYS[m.k]; if(dd && dd.personal && dd.personal[s.id] && dd.personal[s.id].trabajo) count++; }); return {s, count}; }).sort((a,b)=>b.count-a.count);
       const head = meta.map(m=>`<th class="${m.wknd?'wknd':''}"><span class="ac-wd">${m.wd}</span><span class="ac-dn">${m.dn}</span></th>`).join('');
       const body = rows.map(r=>{
-        const cells = meta.map(m=>{ const dd=DAYS[m.k]; const on = dd.personal && dd.personal[r.s.id] && dd.personal[r.s.id].trabajo; return `<td class="${on?'on':''}${m.wknd?' wknd':''}" data-asis-staff="${escAttr(r.s.id)}" data-asis-day="${m.k}"></td>`; }).join('');
+        const cells = meta.map(m=>{ const dd=DAYS[m.k]; const on = dd && dd.personal && dd.personal[r.s.id] && dd.personal[r.s.id].trabajo; return `<td class="${on?'on':''}${m.wknd?' wknd':''}" data-asis-staff="${escAttr(r.s.id)}" data-asis-day="${m.k}"></td>`; }).join('');
         return `<tr><td class="ac-name">${escAttr(r.s.name||'—')}${r.s.role?`<span>${escAttr(r.s.role)}</span>`:''}</td>${cells}<td class="ac-tot mono">${r.count}</td></tr>`;
       }).join('');
       return `<div class="breakdown"><h3>Asistencia del personal · ${monthLabel(currentMonth)}</h3>
         <p class="admin-hint" style="margin-bottom:10px">Toc\u00e1 una celda para marcar o desmarcar la asistencia de ese d\u00eda. Los fines de semana quedan resaltados.</p>
+        <button class="add-btn" id="expAsis" style="margin-bottom:10px">\u2193 Exportar asistencia (Excel)</button>
         <div class="asis-cal-wrap"><table class="asis-cal">
           <thead><tr><th class="ac-name">Empleado</th>${head}<th class="ac-tot">D\u00edas</th></tr></thead>
           <tbody>${body}</tbody>
@@ -1543,6 +1566,8 @@ function renderResumen(){
     if(dd.personal[sid].trabajo){ const st = CONFIG.staff.find(x=>x.id===sid); dd.personal[sid].jornal = Number(st && st.jornal) || 0; }
     saveDays(); renderResumen();
   }));
+  const expA = document.getElementById('expAsis');
+  if(expA) expA.addEventListener('click', ()=>exportAsistencia(currentMonth));
 
   main.querySelectorAll('[data-cta]').forEach(el=>{
     el.addEventListener('input', ()=>{
