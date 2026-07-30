@@ -1836,9 +1836,10 @@ const LS_ADMIN = 'zc_admin_v1';
 const LS_CLOUD = 'zc_cloud_v1';
 
 // Config de nube: dejala vacia y cargala desde Equipo > Nube, o hardcodeala aca.
-const CLOUD_DEFAULT = { url:'', token:'' };
+const CLOUD_DEFAULT = { url:'https://script.google.com/macros/s/AKfycbwOOfhF8X8-Aori_hF6GlyNUnHEOGa98Xxv5pOPYTkHgLc9n9c0Var2zd7f554q9Hq7/exec', token:'camila204' };
 let CLOUD = Object.assign({}, CLOUD_DEFAULT, loadJSON(LS_CLOUD, {}));
 function saveCloud(){ saveJSON(LS_CLOUD, {url:CLOUD.url, token:CLOUD.token}); }
+if(!CLOUD.url){ CLOUD.url = CLOUD_DEFAULT.url; CLOUD.token = CLOUD_DEFAULT.token; saveCloud(); }
 
 let USERS = loadJSON(LS_USERS, null);
 let ADMIN = loadJSON(LS_ADMIN, {});   // { 'YYYY-MM': [ {dia, concepto, detalle, bucket, tipo, monto} ] }
