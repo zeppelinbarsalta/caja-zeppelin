@@ -85,6 +85,24 @@
   .asis-role{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
   .asis-count{font-size:13px;color:var(--gold)}
   .asis-days{font-size:11px;color:var(--muted);margin-top:3px;font-family:'JetBrains Mono',monospace;line-height:1.6}
+  .asis-cal-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .asis-cal{border-collapse:separate;border-spacing:0;font-size:11px}
+  .asis-cal th,.asis-cal td{border-bottom:1px solid var(--border);border-right:1px solid var(--border);text-align:center}
+  .asis-cal thead th{color:var(--muted);font-weight:600;height:34px;min-width:24px;position:sticky;top:0;background:var(--surface);border-top:1px solid var(--border);padding:2px 0}
+  .asis-cal .ac-wd{display:block;font-size:8px;color:var(--muted2);text-transform:uppercase;line-height:1;margin-bottom:2px}
+  .asis-cal .ac-dn{display:block;font-size:11px;line-height:1.1}
+  .asis-cal thead th.wknd{color:var(--gold)}
+  .asis-cal thead th.wknd .ac-wd{color:var(--gold)}
+  .asis-cal tbody td{cursor:pointer}
+  .asis-cal tbody td.wknd{background:rgba(128,128,128,0.10)}
+  .asis-cal tbody td.on.wknd{background:var(--orange)}
+  .asis-cal tbody td{width:22px;height:24px}
+  .asis-cal tbody td.on{background:var(--orange);border-radius:3px}
+  .asis-cal .ac-name{text-align:left;padding:6px 10px 6px 2px;white-space:nowrap;position:sticky;left:0;background:var(--surface);z-index:2;min-width:132px;font-size:13px}
+  .asis-cal thead .ac-name{z-index:3}
+  .asis-cal .ac-name span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-left:6px}
+  .asis-cal .ac-tot{padding:0 10px;font-weight:700;color:var(--gold);min-width:44px;position:sticky;right:0;background:var(--surface);z-index:2}
+  .asis-cal thead .ac-tot{z-index:3}
   .transf-meta{display:flex;flex-direction:column;justify-content:center;min-width:60px;flex:0 0 auto;line-height:1.2}
   .transf-hora{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted)}
   .transf-user{font-size:10px;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px}
@@ -1477,16 +1495,23 @@ function renderResumen(){
     </div>
 
     ${(function(){
-      const asis = (CONFIG.staff||[]).map(s=>{
-        const dias=[]; keys.forEach(k=>{ const dd=DAYS[k]; if(dd && dd.personal && dd.personal[s.id] && dd.personal[s.id].trabajo) dias.push(k.split('-')[2]); });
-        return {name:s.name, role:s.role, count:dias.length, dias};
-      }).filter(r=>r.count>0).sort((a,b)=>b.count-a.count);
-      if(!asis.length) return '';
+      const opDays = keys.filter(k=>{ const dd=DAYS[k]; return dd && (totalIngresos(dd)>0 || (dd.personal && Object.values(dd.personal).some(p=>p&&p.trabajo))); });
+      const staff = (CONFIG.staff||[]);
+      if(!staff.length || !opDays.length) return '';
+      const WD = ['D','L','M','X','J','V','S'];
+      const meta = opDays.map(k=>{ const p=k.split('-').map(Number); const wd=new Date(p[0],p[1]-1,p[2]).getDay(); return {k, dn:p[2], wd:WD[wd], wknd:(wd===0||wd===6)}; });
+      const rows = staff.map(s=>{ let count=0; opDays.forEach(k=>{ const dd=DAYS[k]; if(dd.personal && dd.personal[s.id] && dd.personal[s.id].trabajo) count++; }); return {s, count}; }).sort((a,b)=>b.count-a.count);
+      const head = meta.map(m=>`<th class="${m.wknd?'wknd':''}"><span class="ac-wd">${m.wd}</span><span class="ac-dn">${m.dn}</span></th>`).join('');
+      const body = rows.map(r=>{
+        const cells = meta.map(m=>{ const dd=DAYS[m.k]; const on = dd.personal && dd.personal[r.s.id] && dd.personal[r.s.id].trabajo; return `<td class="${on?'on':''}${m.wknd?' wknd':''}" data-asis-staff="${escAttr(r.s.id)}" data-asis-day="${m.k}"></td>`; }).join('');
+        return `<tr><td class="ac-name">${escAttr(r.s.name||'—')}${r.s.role?`<span>${escAttr(r.s.role)}</span>`:''}</td>${cells}<td class="ac-tot mono">${r.count}</td></tr>`;
+      }).join('');
       return `<div class="breakdown"><h3>Asistencia del personal · ${monthLabel(currentMonth)}</h3>
-        ${asis.map(r=>`<div class="asis-row">
-          <div class="asis-top"><span class="asis-name">${escAttr(r.name||'—')}${r.role?` <span class="asis-role">${escAttr(r.role)}</span>`:''}</span><span class="asis-count mono">${r.count} día${r.count===1?'':'s'}</span></div>
-          <div class="asis-days">${r.dias.join(' · ')}</div>
-        </div>`).join('')}
+        <p class="admin-hint" style="margin-bottom:10px">Toc\u00e1 una celda para marcar o desmarcar la asistencia de ese d\u00eda. Los fines de semana quedan resaltados.</p>
+        <div class="asis-cal-wrap"><table class="asis-cal">
+          <thead><tr><th class="ac-name">Empleado</th>${head}<th class="ac-tot">D\u00edas</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table></div>
       </div>`;
     })()}
 
@@ -1510,6 +1535,14 @@ function renderResumen(){
 
   document.getElementById('prevMonth').addEventListener('click', ()=>{ currentMonth = shiftMonth(currentMonth,-1); renderResumen(); });
   document.getElementById('nextMonth').addEventListener('click', ()=>{ currentMonth = shiftMonth(currentMonth,1); renderResumen(); });
+  main.querySelectorAll('[data-asis-day]').forEach(cell=>cell.addEventListener('click', ()=>{
+    const sid = cell.dataset.asisStaff, dk = cell.dataset.asisDay;
+    const dd = getDay(dk);
+    if(!dd.personal[sid]) dd.personal[sid] = {trabajo:false};
+    dd.personal[sid].trabajo = !dd.personal[sid].trabajo;
+    if(dd.personal[sid].trabajo){ const st = CONFIG.staff.find(x=>x.id===sid); dd.personal[sid].jornal = Number(st && st.jornal) || 0; }
+    saveDays(); renderResumen();
+  }));
 
   main.querySelectorAll('[data-cta]').forEach(el=>{
     el.addEventListener('input', ()=>{
