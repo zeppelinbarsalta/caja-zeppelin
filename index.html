@@ -315,6 +315,8 @@
   .kpi.accent .k-val{color:var(--gold)}
   .kpi.pos .k-val{color:var(--green)} .kpi.neg .k-val{color:var(--red)} .kpi.warn .k-val{color:var(--gold)}
   .bd-pct{font-size:11px;color:var(--muted);margin-left:6px}
+  .tb-pct{font-size:11px;color:var(--muted);margin-top:4px;font-weight:500}
+  .bd-name-pct{font-size:11px;color:var(--muted);font-weight:400}
   .be-line{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
   .be-line span{color:var(--muted)}
   .be-big{display:flex;justify-content:space-between;align-items:center;padding:12px 0 8px}
@@ -1469,8 +1471,8 @@ function renderResumen(){
 
     <div class="totals-banner">
       <div class="stat ing"><div class="lab">Ingresos del mes</div><div class="val mono">${fmt(ing)}</div></div>
-      <div class="stat gas"><div class="lab">Gastos del mes</div><div class="val mono">${fmt(gas)}</div></div>
-      <div class="stat full ${res>=0?'pos':'neg'}"><div class="lab">Resultado del mes</div><div class="val mono">${fmt(res)}</div></div>
+      <div class="stat gas"><div class="lab">Gastos del mes</div><div class="val mono">${fmt(gas)}</div><div class="tb-pct">${ing?pct(gas/ing)+' de ingresos':'\u2014'}</div></div>
+      <div class="stat full ${res>=0?'pos':'neg'}"><div class="lab">Resultado del mes</div><div class="val mono">${fmt(res)}</div><div class="tb-pct">${ing?pct(res/ing)+' de ingresos':'\u2014'}</div></div>
     </div>
 
     <div class="stats-grid">
@@ -1484,7 +1486,7 @@ function renderResumen(){
       <h3>Gastos por categoría</h3>
       ${[['Mercadería',cMerc,'var(--orange)'],['Mantenimiento',cMant,'var(--gold)'],['Sueldos, cargas y servicios',cImp,'#E74C3C'],['Extras',cExt,'#9B59B6'],['Personal',cPers,'#27AE60']].map(([name,val,color])=>`
         <div class="bd-row">
-          <div class="bd-name">${name}</div>
+          <div class="bd-name">${name} <span class="bd-name-pct">${gas?pct(val/gas):''}</span></div>
           <div class="bd-bar-wrap"><div class="bd-bar" style="width:${(val/maxCat*100).toFixed(1)}%;background:${color}"></div></div>
           <div class="bd-val mono">${fmt(val)}</div>
         </div>
