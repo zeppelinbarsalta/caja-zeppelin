@@ -1491,6 +1491,8 @@ function renderResumen(){
       `).join('')}
     </div>
 
+    ${itemBreakdownHTML(currentMonth)}
+
     <div class="chart-box">
       <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">Ingresos vs gastos por día</h3>
       ${barChart(keys)}
@@ -2208,6 +2210,29 @@ function wireScopeToggle(){
 }
 function renderEstadisticas(){ return statScope==='anual' ? renderEstadisticasAnual() : renderEstadisticasMensual(); }
 
+function itemBreakdown(ym){
+  const list = daysInMonth(ym).map(k=>getDay(k)).filter(dayHasData);
+  const g = {mercaderia:{}, mantenimiento:{}, impuestos:{}};
+  ['mercaderia','mantenimiento','impuestos'].forEach(gr=>{ (CONFIG[gr]||[]).forEach(name=>{ if(name) g[gr][name]=0; }); });
+  list.forEach(d=>{ (d.movimientos||[]).forEach(m=>{ if(g[m.group]){ const v=(Number(m.monto)||0)*(m.tipo==='E'?-1:1); const key=m.concepto||'(sin concepto)'; g[m.group][key]=(g[m.group][key]||0)+v; } }); });
+  return g;
+}
+function itemBreakdownHTML(ym){
+  const g = itemBreakdown(ym);
+  const secs = [['mercaderia','Mercader\u00eda'],['mantenimiento','Mantenimiento'],['impuestos','Sueldos, cargas y servicios']];
+  const html = secs.map(function(sec){
+    const key=sec[0], label=sec[1];
+    const items = Object.keys(g[key]).map(k=>[k, g[key][k]]).sort((a,b)=>b[1]-a[1]);
+    if(!items.length) return '';
+    const tot = items.reduce((a,e)=>a+e[1],0);
+    const maxv = Math.max.apply(null, items.map(e=>Math.abs(e[1])).concat([1]));
+    return `<div class="breakdown"><h3>${label} \u00b7 ${fmt(tot)}</h3>
+      ${items.map(e=>`<div class="bd-row"><div class="bd-name">${escAttr(e[0])}</div><div class="bd-bar-wrap"><div class="bd-bar" style="width:${(Math.abs(e[1])/maxv*100).toFixed(1)}%;background:${catColor(key)}"></div></div><div class="bd-val mono">${fmt(e[1])}</div><div class="bd-pct">${tot?pct(e[1]/tot):''}</div></div>`).join('')}
+    </div>`;
+  }).join('');
+  if(!html.trim()) return '';
+  return `<h3 style="font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:18px 0 4px">Desagregado por \u00edtem</h3>` + html;
+}
 function renderEstadisticasMensual(){
   const ym = panelMonth;
   const a = monthAgg(ym), st = costBreakdown(a), V = st.ventas;
