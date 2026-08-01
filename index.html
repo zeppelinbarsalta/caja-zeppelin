@@ -2306,11 +2306,24 @@ function showLogin(){
   document.getElementById('liUser').value=''; document.getElementById('liPass').value=''; document.getElementById('liErr').textContent='';
   document.getElementById('liUser').focus();
 }
-function doLogin(){
+async function doLogin(){
   const name = document.getElementById('liUser').value.trim();
   const pass = document.getElementById('liPass').value;
+  const errEl = document.getElementById('liErr');
+  const btn = document.getElementById('liBtn');
+  errEl.textContent = '';
+  // traer los usuarios/datos mas recientes de la nube antes de validar
+  if(cloudEnabled()){
+    errEl.textContent = 'Sincronizando\u2026'; if(btn){ btn.disabled = true; }
+    try{
+      const r = await fetch(CLOUD.url + '?token=' + encodeURIComponent(CLOUD.token), {method:'GET'});
+      const j = await r.json();
+      if(j && j.ok && j.data){ const remote = JSON.parse(j.data); if(remote) adoptStore(remote); }
+    }catch(e){}
+    if(btn){ btn.disabled = false; } errEl.textContent = '';
+  }
   const u = USERS[name];
-  if(!u || u.pass !== hashPass(pass)){ document.getElementById('liErr').textContent = 'Usuario o clave incorrectos'; return; }
+  if(!u || u.pass !== hashPass(pass)){ errEl.textContent = 'Usuario o clave incorrectos'; return; }
   setCurrent(name); sessionStorage.setItem(AUTH_KEY, name); enterApp();
 }
 function logout(){ currentUser = null; sessionStorage.removeItem(AUTH_KEY); showLogin(); }
