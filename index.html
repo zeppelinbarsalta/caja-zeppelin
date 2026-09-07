@@ -1458,6 +1458,13 @@ function renderResumen(){
     {label:'Extras', value:cExt, color:'#9B59B6'},
     {label:'Personal', value:cPers, color:'#27AE60'}
   ];
+  const egPago = {};
+  list.forEach(dd=>{
+    (dd.movimientos||[]).forEach(m=>{ if(m.tipo==='E') return; const key = m.pago || 'Transferencia'; egPago[key] = (egPago[key]||0) + (Number(m.monto)||0); });
+    const per = totalPersonal(dd); if(per>0) egPago['Transferencia'] = (egPago['Transferencia']||0) + per;
+  });
+  const pagoColor = {'Efectivo':'#2ECC71','Tarjeta':'#3498DB','Transferencia':'#9B59B6','Mercado Pago':'#00B0FF','Cta. Cte.':'var(--gold)'};
+  const egData = Object.keys(egPago).map(k=>({label:k, value:egPago[k], color:pagoColor[k]||'var(--muted)'}));
   const linePts = keys.map(k=>({k,d:getDay(k)})).filter(o=>dayHasData(o.d)).map(o=>({label:o.k.split('-')[2], v:totalIngresos(o.d)}));
 
   const ctasTotal = CTAS.reduce((a,c)=>a+(Number(c.monto)||0),0);
@@ -1512,6 +1519,11 @@ function renderResumen(){
     <div class="chart-box">
       <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px">Ingresos por medio de pago</h3>
       ${donutChart(pagoData)}
+    </div>
+
+    <div class="chart-box">
+      <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px">Egresos por medio de pago</h3>
+      ${donutChart(egData)}
     </div>
 
     <div class="chart-box">
