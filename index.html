@@ -153,6 +153,10 @@
   .staff-top{display:flex;align-items:center;gap:10px}
   .staff-name{font-size:13px;font-weight:500;flex:1}
   .staff-role{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .qr-tag{display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.05em;padding:1px 5px;border-radius:4px;background:var(--orange);color:#fff;vertical-align:middle}
+  .qr-sync{font-size:11px;color:var(--muted);margin:2px 0 10px;line-height:1.5}
+  .qr-sync b{color:var(--text)}
+  .qr-warn{color:var(--orange)}
   .staff-toggle{
     flex:none;background:var(--surface2);border:1px solid var(--border);color:var(--muted);
     border-radius:999px;padding:7px 14px;font-size:11px;letter-spacing:.03em;text-transform:uppercase;
@@ -855,6 +859,7 @@ function cardGastos(d){
 }
 
 function renderHoy(){
+  syncAsistencia(currentDate, false);
   const d = getDay(currentDate);
   const m = main;
   m.innerHTML = `
@@ -1032,6 +1037,7 @@ function cardPersonal(d){
     </div>
     <div class="card-body">
       <p class="cash-hint">Los jornales se registran como pago por <b>transferencia</b>: cuentan como Laboral en el mes pero <b>no</b> afectan el arqueo de caja.</p>
+      ${qrSyncHtml(currentDate)}
       ${CONFIG.staff.map(s=>{
         const p = d.personal[s.id] || {trabajo:false};
         const on = !!p.trabajo;
@@ -1039,7 +1045,7 @@ function cardPersonal(d){
         <div class="staff-row">
           <div class="staff-top">
             <div>
-              <div class="staff-name">${s.name}</div>
+              <div class="staff-name">${s.name}${p.asis?'<span class="qr-tag" title="Activado por marca de asistencia QR">QR</span>':''}</div>
               <div class="staff-role">${s.role}</div>
             </div>
             <div style="flex:1"></div>
@@ -1247,6 +1253,7 @@ function bindHoyEvents(d){
       const id = el.dataset.chk;
       if(!d.personal[id]) d.personal[id] = {trabajo:false};
       d.personal[id].trabajo = !d.personal[id].trabajo;
+      d.personal[id].manual = true; d.personal[id].asis = false;
       if(d.personal[id].trabajo){ const s = CONFIG.staff.find(x=>x.id===id); d.personal[id].jornal = Number(s && s.jornal) || 0; }
       saveDays();
       const on = d.personal[id].trabajo;
@@ -1580,6 +1587,7 @@ function renderResumen(){
     const dd = getDay(dk);
     if(!dd.personal[sid]) dd.personal[sid] = {trabajo:false};
     dd.personal[sid].trabajo = !dd.personal[sid].trabajo;
+    dd.personal[sid].manual = true; dd.personal[sid].asis = false;
     if(dd.personal[sid].trabajo){ const st = CONFIG.staff.find(x=>x.id===sid); dd.personal[sid].jornal = Number(st && st.jornal) || 0; }
     saveDays(); renderResumen();
   }));
@@ -1749,6 +1757,7 @@ function renderEquipoBody(){
           <div class="row" style="gap:6px">
             <input type="text" data-staff="${i}" data-f="name" value="${escAttr(s.name)}" placeholder="Nombre" style="flex:1.3;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px">
             <input type="text" data-staff="${i}" data-f="role" value="${escAttr(s.role)}" placeholder="Rol" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px">
+            <input type="text" inputmode="numeric" data-staff="${i}" data-f="dni" value="${escAttr(s.dni||'')}" placeholder="DNI" title="DNI para vincular con la asistencia QR" style="width:92px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px">
             <input type="text" inputmode="numeric" data-staff="${i}" data-f="jornal" value="${s.jornal}" style="width:78px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px;text-align:right">
             <button class="del" data-delstaff="${i}">✕</button>
           </div>
@@ -1759,7 +1768,7 @@ function renderEquipoBody(){
     body.querySelectorAll('[data-staff]').forEach(el=>{
       el.addEventListener('input', ()=>{
         const i = +el.dataset.staff, f = el.dataset.f;
-        CONFIG.staff[i][f] = f==='jornal' ? (parseNum(el.value)||0) : el.value;
+        CONFIG.staff[i][f] = f==='jornal' ? (parseNum(el.value)||0) : f==='dni' ? el.value.replace(/\D/g,'') : el.value;
         saveConfig();
       });
     });
@@ -1955,6 +1964,78 @@ function cloudPush(now){
   };
   if(now) doPush(); else cloudPushTimer = setTimeout(doPush, 900);
 }
+
+/* ---- Asistencia QR -> Personal del día ----
+   Quien marca INGRESO en zeppelin-bar.com/asistencia queda Activo en la fecha operativa (la noche).
+   Nunca pisa una decisión manual del encargado (activar o desactivar a mano). */
+const ASIS = { url:'https://script.google.com/macros/s/AKfycby5KUw7KKL1WYv95fA3VbfNNPbOgJiakDjDEB_L1gR59XNMZKBGyassvPNbkc4I3q1o/exec', token:'zpp-caja-7Q4' };
+const asisEstado = {};   // fecha -> {at, n, sin:[], err}
+function qrNorm(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z\s]/g,' ').split(/\s+/).filter(Boolean); }
+function qrCerca(a,b){
+  if(a===b) return true;
+  if(Math.min(a.length,b.length) < 5 || Math.abs(a.length-b.length) > 1) return false;
+  let i=0,j=0,dif=0;
+  while(i<a.length && j<b.length){
+    if(a[i]===b[j]){ i++; j++; continue; }
+    if(++dif>1) return false;
+    if(a.length>b.length) i++; else if(b.length>a.length) j++; else { i++; j++; }
+  }
+  return dif + (a.length-i) + (b.length-j) <= 1;
+}
+function qrBuscarStaff(p, cambios){
+  const porDni = CONFIG.staff.find(x=>x.dni && String(x.dni)===String(p.dni));
+  if(porDni) return porDni;
+  const ft = qrNorm(p.nombre+' '+p.apellido);
+  const cand = CONFIG.staff.filter(x=>{
+    if(x.dni) return false;
+    const ct = qrNorm(x.name);
+    if(ct.length < 2) return false;
+    return ft.some(t=>qrCerca(t, ct[0])) && ft.some(t=>qrCerca(t, ct[ct.length-1]));
+  });
+  if(cand.length===1){ cand[0].dni = String(p.dni); cambios.cfg = true; return cand[0]; }
+  return null;
+}
+async function syncAsistencia(fecha, force){
+  if(!ASIS.url || !fecha) return;
+  const e = asisEstado[fecha];
+  if(!force && e && Date.now()-e.at < 120000) return;
+  asisEstado[fecha] = Object.assign({}, e||{}, {at:Date.now()});
+  const cambios = {cfg:false, dia:false};
+  try{
+    const r = await fetch(ASIS.url+'?action=caja_dia&token='+encodeURIComponent(ASIS.token)+'&fecha='+fecha, {method:'GET'});
+    const j = await r.json();
+    if(!j || !j.ok) throw new Error((j && j.error) || 'sin respuesta');
+    const d = getDay(fecha), sin = [];
+    (j.personas||[]).forEach(p=>{
+      const s = qrBuscarStaff(p, cambios);
+      if(!s){ sin.push((p.nombre+' '+p.apellido).trim()); return; }
+      const cur = d.personal[s.id];
+      if(cur && (cur.trabajo || cur.manual)) return;
+      d.personal[s.id] = {trabajo:true, jornal:Number(s.jornal)||0, asis:true};
+      cambios.dia = true;
+    });
+    if(cambios.cfg) saveConfig();
+    if(cambios.dia) saveDays();
+    asisEstado[fecha] = {at:Date.now(), n:(j.personas||[]).length, sin, err:''};
+  }catch(err){
+    asisEstado[fecha] = Object.assign({}, asisEstado[fecha], {err:String(err.message||err)});
+  }
+  if(typeof currentTab==='undefined' || currentTab!=='hoy' || currentDate!==fecha) return;
+  const ae = document.activeElement;
+  const escribiendo = ae && main.contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName);
+  if(cambios.dia && !escribiendo) renderHoy();
+  else { const el = document.getElementById('qrSync'); if(el) el.outerHTML = qrSyncHtml(fecha); }
+}
+function qrSyncHtml(fecha){
+  const e = asisEstado[fecha];
+  if(!e || (!e.n && e.n!==0 && !e.err)) return '<p class="qr-sync" id="qrSync">Asistencia QR: sincronizando…</p>';
+  const hora = new Date(e.at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+  let h = '<p class="qr-sync" id="qrSync">Asistencia QR: <b>'+(e.n||0)+'</b> marcaron ingreso · actualizado '+hora;
+  if(e.err) h += ' · <span class="qr-warn">sin conexión con asistencia</span>';
+  if(e.sin && e.sin.length) h += '<br><span class="qr-warn">Sin vínculo en Equipo: '+e.sin.map(x=>String(x).replace(/[<>&]/g,'')).join(', ')+'</span> — cargá su DNI en Equipo › Personal.';
+  return h + '</p>';
+}
+setInterval(()=>{ if(typeof currentTab!=='undefined' && currentTab==='hoy' && !document.hidden) syncAsistencia(currentDate, true); }, 180000);
 
 /* ---- Respaldo local (JSON) ---- */
 function exportBackup(){
