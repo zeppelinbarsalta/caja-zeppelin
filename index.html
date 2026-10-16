@@ -950,7 +950,7 @@ function cardIngresos(d){
       </div>
       <div class="row" style="border-top:1px solid var(--border);margin-top:4px;padding-top:10px">
         <div class="row-label">Puerta (total)</div>
-        <div class="mono" style="font-weight:700;color:var(--gold);font-size:15px">${fmt((Number(d.ingresos.puertaEfectivo)||0)+(Number(d.ingresos.puertaMP)||0))}</div>
+        <div class="mono" data-puerta-total style="font-weight:700;color:var(--gold);font-size:15px">${fmt((Number(d.ingresos.puertaEfectivo)||0)+(Number(d.ingresos.puertaMP)||0))}</div>
       </div>
     </div>
   </div>`;
@@ -1163,6 +1163,11 @@ function bindHoyEvents(d){
     el.addEventListener('input', ()=>{
       d[el.dataset.group][el.dataset.key] = parseNum(el.value)||0;
       saveDays(); refreshBanner(d);
+      if(el.dataset.group==='ingresos'){
+        const ic = main.querySelector('[data-card="ing"] .card-total'); if(ic) ic.textContent = fmt(totalIngresos(d));
+        const pt = main.querySelector('[data-puerta-total]'); if(pt) pt.textContent = fmt((Number(d.ingresos.puertaEfectivo)||0)+(Number(d.ingresos.puertaMP)||0));
+        refreshCaja(d);
+      }
     });
   });
   main.querySelectorAll('input[data-group][data-item]').forEach(el=>{
