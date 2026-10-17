@@ -1047,6 +1047,7 @@ function cardPersonal(d){
     </div>
     <div class="card-body">
       <p class="cash-hint">Los jornales se registran como pago por <b>transferencia</b>: cuentan como Laboral en el mes pero <b>no</b> afectan el arqueo de caja.</p>
+      <button class="add-btn" id="traerQR" style="margin-bottom:10px">↻ Traer asistencia QR</button>
       ${CONFIG.staff.map(s=>{
         const p = d.personal[s.id] || {trabajo:false};
         const on = !!p.trabajo;
@@ -1323,6 +1324,8 @@ function bindHoyEvents(d){
   if(gMontoEl) gMontoEl.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const gA=document.getElementById('gAdd'); if(gA) gA.click(); } });
   const gOtroEl = document.getElementById('gConceptoOtro');
   if(gOtroEl) gOtroEl.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const gm=document.getElementById('gMonto'); if(gm) gm.focus(); } });
+  const tqBtn = document.getElementById('traerQR');
+  if(tqBtn) tqBtn.addEventListener('click', ()=>traerAsistenciaQR(currentDate, {force:true}));
 
   main.querySelectorAll('[data-denomkey]').forEach(el=>{
     el.addEventListener('input', ()=>{
@@ -1782,6 +1785,7 @@ function renderEquipoBody(){
           <div class="row" style="gap:6px">
             <input type="text" data-staff="${i}" data-f="name" value="${escAttr(s.name)}" placeholder="Nombre" style="flex:1.3;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px">
             <input type="text" data-staff="${i}" data-f="role" value="${escAttr(s.role)}" placeholder="Rol" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px">
+            <input type="text" inputmode="numeric" data-staff="${i}" data-f="dni" value="${escAttr(s.dni||'')}" placeholder="DNI" style="width:92px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px">
             <input type="text" inputmode="numeric" data-staff="${i}" data-f="jornal" value="${s.jornal}" style="width:78px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:8px 10px;font-size:12px;text-align:right">
             <button class="del" data-delstaff="${i}">✕</button>
           </div>
@@ -1800,7 +1804,7 @@ function renderEquipoBody(){
       btn.addEventListener('click', ()=>{ CONFIG.staff.splice(+btn.dataset.delstaff,1); saveConfig(); renderEquipoBody(); });
     });
     document.getElementById('addStaff').addEventListener('click', ()=>{
-      CONFIG.staff.push({id:'p'+Date.now(), name:'', role:'', jornal:0});
+      CONFIG.staff.push({id:'p'+Date.now(), name:'', role:'', dni:'', jornal:0});
       saveConfig(); renderEquipoBody();
     });
   } else if(equipoSeg==='impuestos'){
@@ -2399,11 +2403,40 @@ async function doLogin(){
   setCurrent(name); sessionStorage.setItem(AUTH_KEY, name); enterApp();
 }
 function logout(){ currentUser = null; sessionStorage.removeItem(AUTH_KEY); showLogin(); }
+const ASIST_URL = 'https://script.google.com/macros/s/AKfycby5KUw7KKL1WYv95fA3VbfNNPbOgJiakDjDEB_L1gR59XNMZKBGyassvPNbkc4I3q1o/exec';
+const ASIST_TOKEN = 'zpp-caja-7Q4';
+function normNom(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim(); }
+function matchStaffAsist(p){
+  const dni = String(p.dni||'').replace(/\D/g,'');
+  if(dni){ const byDni = CONFIG.staff.find(s=>String(s.dni||'').replace(/\D/g,'') && String(s.dni||'').replace(/\D/g,'')===dni); if(byDni) return byDni; }
+  const full = normNom((p.nombre||'')+' '+(p.apellido||''));
+  const rev = normNom((p.apellido||'')+' '+(p.nombre||''));
+  return CONFIG.staff.find(s=>{ const n=normNom(s.name); return n && (n===full || n===rev); }) || null;
+}
+async function traerAsistenciaQR(fecha, opt){
+  opt = opt || {};
+  try{
+    const r = await fetch(ASIST_URL + '?action=caja_dia&token=' + encodeURIComponent(ASIST_TOKEN) + '&fecha=' + encodeURIComponent(fecha));
+    const j = await r.json();
+    if(!j || !j.ok || !Array.isArray(j.personas)){ if(!opt.silencioso) showToast('No se pudo traer la asistencia'); return; }
+    const d = getDay(fecha);
+    let activados = 0; const sinMatch = [];
+    j.personas.forEach(p=>{
+      const st = matchStaffAsist(p);
+      if(!st){ sinMatch.push(((p.nombre||'')+' '+(p.apellido||'')).trim()); return; }
+      if(!d.personal[st.id]) d.personal[st.id] = {trabajo:false};
+      if(!d.personal[st.id].trabajo){ d.personal[st.id].trabajo = true; d.personal[st.id].jornal = Number(st.jornal)||0; activados++; }
+    });
+    if(activados){ saveDays(); scheduleCloudPush(); if(currentTab==='hoy' && currentDate===fecha) renderHoy(); }
+    if(!opt.silencioso) showToast(j.personas.length + ' fichados \u00b7 ' + activados + ' activados' + (sinMatch.length? ' \u00b7 sin match: ' + sinMatch.join(', ') : ''));
+  }catch(e){ if(!opt.silencioso) showToast('Error al traer asistencia QR'); }
+}
 function enterApp(){
   document.getElementById('loginOverlay').style.display = 'none';
   document.getElementById('userName').textContent = currentUser.name;
   applyPermissions();
   switchTab(firstAllowedTab());
+  if(currentDate === todayStr()) traerAsistenciaQR(currentDate, {silencioso:true});
 }
 function applyPermissions(){
   document.querySelectorAll('.navbtn').forEach(b=>{ b.style.display = currentUser.tabs.includes(b.dataset.tab) ? '' : 'none'; });
@@ -2563,6 +2596,7 @@ const savedUser = sessionStorage.getItem(AUTH_KEY);
 if(savedUser && USERS[savedUser] && setCurrent(savedUser)) enterApp();
 else showLogin();
 if(cloudEnabled()) cloudPull();
+setInterval(()=>{ if(currentUser && currentDate===todayStr()) traerAsistenciaQR(currentDate, {silencioso:true}); }, 180000);
 </script>
 </body>
 </html>
