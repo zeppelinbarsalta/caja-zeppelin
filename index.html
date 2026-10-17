@@ -806,6 +806,27 @@ let openCards = {gastos:true, merc:true, mant:false, imp:false, extra:false, per
 function catColor(g){ return ({mercaderia:'var(--orange)',mantenimiento:'var(--gold)',impuestos:'#E74C3C',extras:'#9B59B6',personal:'#27AE60'})[g] || 'var(--muted)'; }
 function catLabel(g){ return ({mercaderia:'Mercader\u00eda',mantenimiento:'Mantenimiento',impuestos:'Sueldos, cargas y servicios',extras:'Extras',personal:'Personal (jornales)'})[g] || g; }
 const GSEP = '\u0001';
+const COMPROBANTES = ['Sin comprobante','Factura A','Factura B','Factura C','Presupuesto'];
+const COMP_IVA = {'Factura A':true};
+function comprobanteBreakdown(ym){
+  const list = daysInMonth(ym).map(k=>getDay(k)).filter(dayHasData);
+  const acc = {};
+  list.forEach(d=>{ (d.movimientos||[]).forEach(m=>{ if(m.tipo==='E') return; const comp = m.comp || 'Sin comprobante'; if(!acc[comp]) acc[comp]={total:0,iva:0,neto:0}; acc[comp].total += (Number(m.monto)||0); }); });
+  Object.keys(acc).forEach(comp=>{ const t=acc[comp].total; if(COMP_IVA[comp]){ acc[comp].iva = t*0.21/1.21; acc[comp].neto = t-acc[comp].iva; } else { acc[comp].iva=0; acc[comp].neto=t; } });
+  return acc;
+}
+function comprobanteHTML(ym){
+  const acc = comprobanteBreakdown(ym);
+  const comps = Object.keys(acc).filter(c=>acc[c].total!==0).sort((a,b)=>acc[b].total-acc[a].total);
+  if(!comps.length) return '';
+  const totT = comps.reduce((a,c)=>a+acc[c].total,0), totN = comps.reduce((a,c)=>a+acc[c].neto,0), totI = comps.reduce((a,c)=>a+acc[c].iva,0);
+  return `<div class="breakdown"><h3>Compras por comprobante</h3>
+    <div class="sdc-head"><div class="sdc-name">Comprobante</div><div>Total</div><div>Neto</div><div>IVA 21%</div></div>
+    ${comps.map(c=>`<div class="sdc-row"><div class="sdc-name">${escAttr(c)}</div><div class="sdc-val mono">${fmt(acc[c].total)}</div><div class="sdc-val mono">${fmt(acc[c].neto)}</div><div class="sdc-val mono" style="color:var(--gold)">${acc[c].iva?fmt(acc[c].iva):'\u2014'}</div></div>`).join('')}
+    <div class="sdc-row sdc-tot"><div class="sdc-name">Total</div><div class="sdc-val mono">${fmt(totT)}</div><div class="sdc-val mono">${fmt(totN)}</div><div class="sdc-val mono" style="color:var(--gold)">${fmt(totI)}</div></div>
+    <p class="admin-hint" style="margin-top:8px">IVA discriminado (21%) solo en Factura A. El total de IVA es tu cr\u00e9dito fiscal estimado del mes.</p>
+  </div>`;
+}
 function cardGastos(d){
   const list = d.movimientos || [];
   const gTot = totalGastos(d);
@@ -834,6 +855,7 @@ function cardGastos(d){
         <select class="mov-in" id="gConcepto">${conceptoOpts}</select>
         <input class="mov-in" id="gConceptoOtro" type="text" placeholder="Concepto del extra" style="display:none">
         <input class="mov-in" id="gDetalle" type="text" placeholder="Detalle (proveedor / factura, opcional)">
+        <select class="mov-in" id="gComp" style="margin-top:7px">${COMPROBANTES.map(c=>'<option value="'+c+'">'+c+'</option>').join('')}</select>
         <div class="mov-row2">
           <select class="mov-in" id="gPago" style="flex:1">${pagoOpts}</select>
           <div class="tipo-seg" id="gTipo"><button data-tipo="S" class="active">Gasto</button><button data-tipo="E" class="ent">Ingreso</button></div>
@@ -847,7 +869,7 @@ function cardGastos(d){
         ${list.length ? list.map((r,i)=>`
           <div class="mov-item">
             <span class="cat-chip" style="background:${catColor(r.group)}"></span>
-            <div class="mov-c"><div class="mov-con">${escAttr(r.concepto||'\u2014')}</div><div class="mov-det">${catLabel(r.group)}${r.detalle?' \u00b7 '+escAttr(r.detalle):''}${r.pago?' \u00b7 '+escAttr(r.pago):''}</div></div>
+            <div class="mov-c"><div class="mov-con">${escAttr(r.concepto||'\u2014')}</div><div class="mov-det">${catLabel(r.group)}${r.detalle?' \u00b7 '+escAttr(r.detalle):''}${r.pago?' \u00b7 '+escAttr(r.pago):''}${(r.comp&&r.comp!=='Sin comprobante')?' \u00b7 '+escAttr(r.comp):''}</div></div>
             <div class="mov-monto mono ${r.tipo==='E'?'pos':'neg'}">${r.tipo==='E'?'+':''}${fmt(r.monto)}</div>
             <button class="del" data-delmov="${i}">\u2715</button>
           </div>`).join('') : '<div class="empty" style="padding:12px 0">Sin gastos cargados hoy</div>'}
@@ -1254,7 +1276,8 @@ function bindHoyEvents(d){
       const pago = document.getElementById('gPago').value || '';
       const monto = parseNum(document.getElementById('gMonto').value)||0;
       if(!monto){ showToast('Ingres\u00e1 un monto'); return; }
-      d.movimientos.push({group, concepto, detalle, pago, tipo:gTipo, monto});
+      const comp = (document.getElementById('gComp')||{}).value || 'Sin comprobante';
+      d.movimientos.push({group, concepto, detalle, pago, comp, tipo:gTipo, monto});
       saveDays(); openCards.gastos = true; renderHoy();
     });
   }
@@ -1530,6 +1553,8 @@ function renderResumen(){
     </div>
 
     ${itemBreakdownHTML(currentMonth)}
+
+    ${comprobanteHTML(currentMonth)}
 
     <div class="chart-box">
       <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">Ingresos vs gastos por día</h3>
@@ -2445,12 +2470,54 @@ async function traerAsistenciaQR(fecha, opt){
     if(!opt.silencioso) showToast(j.personas.length + ' fichados \u00b7 ' + activados + ' activados' + (sinMatch.length? ' \u00b7 sin match: ' + sinMatch.join(', ') : ''));
   }catch(e){ if(!opt.silencioso) showToast('Error al traer asistencia QR'); }
 }
+const IDB_NAME='zc_backups', IDB_STORE='copias'; let lastBackupAt=0;
+function idbOpen(){ return new Promise((res,rej)=>{ try{ const r=indexedDB.open(IDB_NAME,1); r.onupgradeneeded=()=>{ const db=r.result; if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE,{keyPath:'ts'}); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }catch(e){ rej(e); } }); }
+function idbPut(o){ return idbOpen().then(db=>new Promise((res,rej)=>{ const tx=db.transaction(IDB_STORE,'readwrite'); tx.objectStore(IDB_STORE).put(o); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); })); }
+function idbAll(){ return idbOpen().then(db=>new Promise((res,rej)=>{ const tx=db.transaction(IDB_STORE,'readonly'); const q=tx.objectStore(IDB_STORE).getAll(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>rej(q.error); })); }
+function idbDel(ts){ return idbOpen().then(db=>new Promise((res)=>{ const tx=db.transaction(IDB_STORE,'readwrite'); tx.objectStore(IDB_STORE).delete(ts); tx.oncomplete=()=>res(); tx.onerror=()=>res(); })); }
+async function backupLocal(forzar){
+  try{
+    const lu = localUpdatedAt();
+    if(!forzar && lu && lu <= lastBackupAt) return;
+    const snap = { ts: Date.now(), updatedAt: lu||Date.now(), data: JSON.stringify(buildStore()) };
+    await idbPut(snap);
+    lastBackupAt = snap.updatedAt;
+    const all = await idbAll(); all.sort((a,b)=>b.ts-a.ts);
+    for(let i=30;i<all.length;i++){ await idbDel(all[i].ts); }
+  }catch(e){}
+}
+async function renderBackupsList(){
+  const cont = document.getElementById('bkList'); if(!cont) return;
+  try{
+    const all = await idbAll(); all.sort((a,b)=>b.ts-a.ts);
+    if(!all.length){ cont.innerHTML = '<div class="empty" style="padding:8px 0">Todav\u00eda no hay copias</div>'; return; }
+    cont.innerHTML = all.slice(0,30).map(b=>{
+      const lbl = new Date(b.ts).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      return `<div class="row" style="gap:8px;align-items:center;border-bottom:1px solid var(--border);padding:8px 0">
+        <div style="flex:1;font-size:13px" class="mono">${lbl}</div>
+        <button class="add-btn" data-bkrest="${b.ts}" style="width:auto;padding:6px 12px;font-size:12px;margin:0">Restaurar</button>
+        <button class="add-btn" data-bkdl="${b.ts}" style="width:auto;padding:6px 10px;font-size:12px;margin:0">\u2193</button>
+      </div>`;
+    }).join('');
+    cont.querySelectorAll('[data-bkrest]').forEach(btn=>btn.addEventListener('click', async ()=>{
+      if(!confirm('\u00bfRestaurar esta copia? Se combina con los datos actuales (la copia tiene prioridad en los d\u00edas que coincidan). Antes conviene tener la app actualizada.')) return;
+      try{ const all2=await idbAll(); const b=all2.find(x=>String(x.ts)===btn.dataset.bkrest); if(!b) return; adoptStore(JSON.parse(b.data)); setLocalUpdatedAt(Date.now()); scheduleCloudPush(); showToast('Copia restaurada'); switchTab(currentTab||'hoy'); }catch(e){ showToast('No se pudo restaurar'); }
+    }));
+    cont.querySelectorAll('[data-bkdl]').forEach(btn=>btn.addEventListener('click', async ()=>{
+      try{ const all2=await idbAll(); const b=all2.find(x=>String(x.ts)===btn.dataset.bkdl); if(!b) return;
+        const blob=new Blob([b.data],{type:'application/json'}); const url=URL.createObjectURL(blob);
+        const a=document.createElement('a'); a.href=url; a.download='Caja_backup_'+new Date(b.ts).toISOString().slice(0,16).replace(/[:T]/g,'-')+'.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      }catch(e){}
+    }));
+  }catch(e){ cont.innerHTML = '<div class="empty">No disponible en este navegador</div>'; }
+}
 function enterApp(){
   document.getElementById('loginOverlay').style.display = 'none';
   document.getElementById('userName').textContent = currentUser.name;
   applyPermissions();
   switchTab(firstAllowedTab());
   if(currentDate === todayStr()) traerAsistenciaQR(currentDate, {silencioso:true});
+  backupLocal(true);
 }
 function applyPermissions(){
   document.querySelectorAll('.navbtn').forEach(b=>{ b.style.display = currentUser.tabs.includes(b.dataset.tab) ? '' : 'none'; });
@@ -2525,6 +2592,10 @@ function renderCloudSeg(body){
         <label class="add-btn" style="flex:1;text-align:center;cursor:pointer;margin:0">Importar\u2026<input id="cloudImport" type="file" accept="application/json" style="display:none"></label>
       </div>
     </div>
+    <div class="breakdown" style="margin-top:12px"><h3>Copias automáticas (este dispositivo)</h3>
+      <p class="admin-hint">La app guarda una copia local sola: al abrir, cada 10 min y al cerrar/cambiar de pestaña. Se conservan las últimas 30. No usa internet, no hace lento el sistema.</p>
+      <div id="bkList"></div>
+    </div>
     <div class="breakdown" style="margin-top:12px"><h3>Importar meses anteriores (Excel)</h3>
       <p class="admin-hint">Para el historial y la comparación anual. Podés subir <b>tu propia planilla mensual</b> (la que ya usás: con su bloque "Totales Gastos" y el mes en el nombre de la hoja) o la plantilla de acá. Cada mes entra en el <b>día 1°</b> con sus totales. No importes el mes en curso (ese cargalo día a día).</p>
       <div class="row" style="gap:8px">
@@ -2550,6 +2621,7 @@ function renderCloudSeg(body){
   document.getElementById('cloudSync').addEventListener('click', ()=>{ if(cloudEnabled()) cloudPull(); else showToast('Guard\u00e1 primero la URL'); });
   document.getElementById('cloudExport').addEventListener('click', exportBackup);
   document.getElementById('cloudImport').addEventListener('change', e=>{ if(e.target.files[0]) importBackup(e.target.files[0]); });
+  renderBackupsList();
   document.getElementById('tplDown').addEventListener('click', descargarPlantillaMeses);
   document.getElementById('mesesImport').addEventListener('change', e=>{ if(e.target.files[0]) importarMesesExcel(e.target.files[0]); });
   document.getElementById('wipeData').addEventListener('click', vaciarDatos);
@@ -2611,6 +2683,8 @@ if(savedUser && USERS[savedUser] && setCurrent(savedUser)) enterApp();
 else showLogin();
 if(cloudEnabled()) cloudPull();
 setInterval(()=>{ if(currentUser && currentDate===todayStr()) traerAsistenciaQR(currentDate, {silencioso:true}); }, 180000);
+setInterval(()=>{ if(currentUser) backupLocal(false); }, 600000);
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && currentUser) backupLocal(false); });
 </script>
 </body>
 </html>
