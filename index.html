@@ -1946,10 +1946,16 @@ function getAdminMonth(ym){ if(!ADMIN[ym]) ADMIN[ym] = []; return ADMIN[ym]; }
 /* ---- Nube (Google Apps Script) ---- */
 let cloudPushTimer = null;
 function cloudEnabled(){ return !!(CLOUD.url); }
-function buildStore(){ return { config:CONFIG, days:DAYS, ctas:CTAS, users:USERS, admin:ADMIN, updatedAt:Date.now() }; }
+function localUpdatedAt(){ return Number(loadJSON('zc_updated', 0)) || 0; }
+function setLocalUpdatedAt(t){ saveJSON('zc_updated', t || Date.now()); }
+function buildStore(){ return { config:CONFIG, days:DAYS, ctas:CTAS, users:USERS, admin:ADMIN, updatedAt: localUpdatedAt() || Date.now() }; }
 function adoptStore(remote){
   if(remote.config){ CONFIG = remote.config; saveJSON(LS_CONFIG, CONFIG); }
-  if(remote.days){ DAYS = remote.days; saveJSON(LS_DAYS, DAYS); }
+  if(remote.days){
+    try{ if(DAYS && Object.keys(DAYS).length) localStorage.setItem('zc_days_safety', JSON.stringify({ts:Date.now(), days:DAYS})); }catch(e){}
+    DAYS = Object.assign({}, DAYS, remote.days);   // base local + la nube gana conflictos; conserva días que solo estén en local
+    saveJSON(LS_DAYS, DAYS);
+  }
   if(remote.ctas){ CTAS = remote.ctas; saveJSON(LS_CTAS, CTAS); }
   if(remote.users){ USERS = remote.users; ensureUsers(); }
   if(remote.admin){ ADMIN = remote.admin; saveJSON(LS_ADMIN, ADMIN); }
@@ -1969,9 +1975,17 @@ async function cloudPull(){
     if(j.data){
       const remote = JSON.parse(j.data);
       if(remote){
-        adoptStore(remote);
-        if(currentUser){ if(USERS[currentUser.name]){ setCurrent(currentUser.name); applyPermissions(); } else { logout(); return; } }
-        if(currentTab) switchTab(currentTab);
+        const rT = Number(remote.updatedAt)||0, lT = localUpdatedAt();
+        const localConDatos = DAYS && Object.keys(DAYS).length > 0;
+        if(rT >= lT || !localConDatos){
+          adoptStore(remote); setLocalUpdatedAt(rT || Date.now());
+          if(currentUser){ if(USERS[currentUser.name]){ setCurrent(currentUser.name); applyPermissions(); } else { logout(); return; } }
+          if(currentTab) switchTab(currentTab);
+        } else {
+          // la nube es MÁS VIEJA que lo local: no pisar. Conservar lo local, sumar días que solo estén en la nube, y volver a subir.
+          if(remote.days){ DAYS = Object.assign({}, remote.days, DAYS); saveJSON(LS_DAYS, DAYS); }
+          cloudPush(true);
+        }
       }
     } else {
       cloudPush(true); // remoto vacio: subo lo local por primera vez
@@ -1979,7 +1993,7 @@ async function cloudPull(){
     setCloudStatus('cloud');
   }catch(e){ setCloudStatus('offline'); }
 }
-function scheduleCloudPush(){ if(cloudEnabled()) cloudPush(false); }
+function scheduleCloudPush(){ setLocalUpdatedAt(Date.now()); if(cloudEnabled()) cloudPush(false); }
 function cloudPush(now){
   if(!cloudEnabled()) return;
   clearTimeout(cloudPushTimer);
