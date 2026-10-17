@@ -801,6 +801,7 @@ let currentDate = todayStr();
 let currentMonth = currentDate.slice(0,7);
 let equipoSeg = 'personal';
 let openCards = {gastos:true, merc:true, mant:false, imp:false, extra:false, pers:false, caja:false, ing:true, transf:false};
+let editingMov = -1;
 
 /* ============================ RENDER: HOY ============================ */
 function catColor(g){ return ({mercaderia:'var(--orange)',mantenimiento:'var(--gold)',impuestos:'#E74C3C',extras:'#9B59B6',personal:'#27AE60'})[g] || 'var(--muted)'; }
@@ -829,14 +830,16 @@ function comprobanteHTML(ym){
 }
 function cardGastos(d){
   const list = d.movimientos || [];
+  const editing = (editingMov>=0 && list[editingMov]) ? list[editingMov] : null;
   const gTot = totalGastos(d);
-  const pagoOpts = (CONFIG.formasPago||[]).map(p=>`<option value="${escAttr(p)}"${p==='Efectivo'?' selected':''}>${p}</option>`).join('');
+  const pagoOpts = (CONFIG.formasPago||[]).map(p=>`<option value="${escAttr(p)}"${(editing?editing.pago===p:p==='Efectivo')?' selected':''}>${p}</option>`).join('');
   const groups = [['mercaderia','Mercader\u00eda',CONFIG.mercaderia],['mantenimiento','Mantenimiento',CONFIG.mantenimiento],['impuestos','Sueldos, cargas y servicios',CONFIG.impuestos]];
   let conceptoOpts = '<option value="">Eleg\u00ed concepto\u2026</option>';
+  if(editing && editing.group!=='extras'){ conceptoOpts = `<option value="${editing.group}${GSEP}${escAttr(editing.concepto)}" selected>${escAttr(editing.concepto)} (actual)</option>` + conceptoOpts; }
   groups.forEach(([gk,glabel,arr])=>{
     conceptoOpts += `<optgroup label="${glabel}">` + (arr||[]).map(x=>`<option value="${gk}${GSEP}${escAttr(x)}">${escAttr(x)}</option>`).join('') + '</optgroup>';
   });
-  conceptoOpts += `<optgroup label="Extras"><option value="extras${GSEP}">\u2795 Otro gasto (Extras)\u2026</option></optgroup>`;
+  conceptoOpts += `<optgroup label="Extras"><option value="extras${GSEP}"${editing&&editing.group==='extras'?' selected':''}>\u2795 Otro gasto (Extras)\u2026</option></optgroup>`;
 
   const summaryCats = [['mercaderia'],['mantenimiento'],['impuestos'],['extras'],['personal']].map(([g])=>({g, v: (g==='mercaderia'?totalMercaderia(d):g==='mantenimiento'?totalMantenimiento(d):g==='impuestos'?totalImpuestos(d):g==='extras'?totalExtras(d):totalPersonal(d))}));
   const maxv = Math.max(1, ...summaryCats.map(t=>Math.abs(t.v)));
@@ -853,16 +856,17 @@ function cardGastos(d){
     <div class="card-body">
       <div class="mov-form">
         <select class="mov-in" id="gConcepto">${conceptoOpts}</select>
-        <input class="mov-in" id="gConceptoOtro" type="text" placeholder="Concepto del extra" style="display:none">
-        <input class="mov-in" id="gDetalle" type="text" placeholder="Detalle (proveedor / factura, opcional)">
-        <select class="mov-in" id="gComp" style="margin-top:7px">${COMPROBANTES.map(c=>'<option value="'+c+'">'+c+'</option>').join('')}</select>
+        <input class="mov-in" id="gConceptoOtro" type="text" placeholder="Concepto del extra" style="display:${editing&&editing.group==='extras'?'':'none'}" value="${editing&&editing.group==='extras'?escAttr(editing.concepto):''}">
+        <input class="mov-in" id="gDetalle" type="text" placeholder="Detalle (proveedor / factura, opcional)" value="${editing?escAttr(editing.detalle||''):''}">
+        <select class="mov-in" id="gComp" style="margin-top:7px">${COMPROBANTES.map(c=>'<option value="'+c+'"'+(editing&&editing.comp===c?' selected':'')+'>'+c+'</option>').join('')}</select>
         <div class="mov-row2">
           <select class="mov-in" id="gPago" style="flex:1">${pagoOpts}</select>
-          <div class="tipo-seg" id="gTipo"><button data-tipo="S" class="active">Gasto</button><button data-tipo="E" class="ent">Ingreso</button></div>
+          <div class="tipo-seg" id="gTipo"><button data-tipo="S" class="${(editing?editing.tipo:'S')==='S'?'active':''}">Gasto</button><button data-tipo="E" class="ent ${editing&&editing.tipo==='E'?'active':''}">Ingreso</button></div>
         </div>
         <div class="mov-row2" style="margin-top:7px">
-          <input class="mov-in" id="gMonto" type="text" inputmode="numeric" placeholder="Monto" style="flex:1;text-align:right">
-          <button class="mov-add" id="gAdd">Agregar</button>
+          <input class="mov-in" id="gMonto" type="text" inputmode="numeric" placeholder="Monto" style="flex:1;text-align:right" value="${editing?editing.monto:''}">
+          <button class="mov-add" id="gAdd">${editing?'Guardar':'Agregar'}</button>
+          ${editing?'<button class="mov-add" id="gCancel" style="background:var(--surface3);color:var(--text)">Cancelar</button>':''}
         </div>
       </div>
       <div class="mov-list">
@@ -871,6 +875,7 @@ function cardGastos(d){
             <span class="cat-chip" style="background:${catColor(r.group)}"></span>
             <div class="mov-c"><div class="mov-con">${escAttr(r.concepto||'\u2014')}</div><div class="mov-det">${catLabel(r.group)}${r.detalle?' \u00b7 '+escAttr(r.detalle):''}${r.pago?' \u00b7 '+escAttr(r.pago):''}${(r.comp&&r.comp!=='Sin comprobante')?' \u00b7 '+escAttr(r.comp):''}</div></div>
             <div class="mov-monto mono ${r.tipo==='E'?'pos':'neg'}">${r.tipo==='E'?'+':''}${fmt(r.monto)}</div>
+            <button class="del" data-editmov="${i}" title="Editar">\u270e</button>
             <button class="del" data-delmov="${i}">\u2715</button>
           </div>`).join('') : '<div class="empty" style="padding:12px 0">Sin gastos cargados hoy</div>'}
       </div>
@@ -1247,7 +1252,7 @@ function bindHoyEvents(d){
   });
 
   // panel unificado de gastos
-  let gTipo = 'S';
+  let gTipo = (editingMov>=0 && d.movimientos[editingMov]) ? (d.movimientos[editingMov].tipo||'S') : 'S';
   const gConcepto = document.getElementById('gConcepto');
   const gOtro = document.getElementById('gConceptoOtro');
   if(gConcepto){
@@ -1277,13 +1282,23 @@ function bindHoyEvents(d){
       const monto = parseNum(document.getElementById('gMonto').value)||0;
       if(!monto){ showToast('Ingres\u00e1 un monto'); return; }
       const comp = (document.getElementById('gComp')||{}).value || 'Sin comprobante';
-      d.movimientos.push({group, concepto, detalle, pago, comp, tipo:gTipo, monto});
+      if(editingMov>=0 && d.movimientos[editingMov]){
+        d.movimientos[editingMov] = Object.assign({}, d.movimientos[editingMov], {group, concepto, detalle, pago, comp, tipo:gTipo, monto});
+        editingMov = -1;
+      } else {
+        d.movimientos.push({group, concepto, detalle, pago, comp, tipo:gTipo, monto});
+      }
       saveDays(); openCards.gastos = true; renderHoy();
     });
   }
   main.querySelectorAll('[data-delmov]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ d.movimientos.splice(+btn.dataset.delmov,1); saveDays(); renderHoy(); });
+    btn.addEventListener('click', ()=>{ editingMov=-1; d.movimientos.splice(+btn.dataset.delmov,1); saveDays(); renderHoy(); });
   });
+  main.querySelectorAll('[data-editmov]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ editingMov = +btn.dataset.editmov; openCards.gastos=true; renderHoy(); setTimeout(()=>{ const f=main.querySelector('[data-card="gastos"] .mov-form'); if(f && f.scrollIntoView) f.scrollIntoView({behavior:'smooth',block:'center'}); }, 60); });
+  });
+  const gCancelBtn = document.getElementById('gCancel');
+  if(gCancelBtn) gCancelBtn.addEventListener('click', ()=>{ editingMov=-1; renderHoy(); });
 
   // personal toggle
   main.querySelectorAll('[data-chk]').forEach(el=>{
@@ -2631,6 +2646,7 @@ function renderCloudSeg(body){
 const main = document.getElementById('main');
 
 function switchTab(tab){
+  editingMov = -1;
   if(currentUser && !currentUser.tabs.includes(tab)) tab = firstAllowedTab();
   currentTab = tab;
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
@@ -2646,7 +2662,7 @@ document.querySelectorAll('.navbtn').forEach(b=>b.addEventListener('click', ()=>
 
 const dateInput = document.getElementById('dateInput');
 dateInput.value = currentDate;
-dateInput.addEventListener('change', ()=>{ currentDate = dateInput.value; currentMonth = currentDate.slice(0,7); renderHoy(); });
+dateInput.addEventListener('change', ()=>{ editingMov=-1; currentDate = dateInput.value; currentMonth = currentDate.slice(0,7); renderHoy(); });
 document.getElementById('prevDay').addEventListener('click', ()=>{ currentDate = addDays(currentDate,-1); dateInput.value = currentDate; renderHoy(); });
 document.getElementById('nextDay').addEventListener('click', ()=>{ currentDate = addDays(currentDate,1); dateInput.value = currentDate; renderHoy(); });
 
