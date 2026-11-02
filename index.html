@@ -899,7 +899,6 @@ function renderHoy(){
     <div class="totals-banner">
       <div class="stat ing"><div class="lab">Ingresos</div><div class="val mono" id="bannerIng">${fmt(totalIngresos(d))}</div></div>
       <div class="stat gas"><div class="lab">Gastos</div><div class="val mono" id="bannerGas">${fmt(totalGastos(d))}</div></div>
-      <div class="stat full ${resultado(d)>=0?'pos':'neg'}"><div class="lab">Resultado del día</div><div class="val mono" id="bannerRes">${fmt(resultado(d))}</div></div>
     </div>
 
     <div class="hoy-strip">
@@ -1419,9 +1418,11 @@ function refreshBanner(d){
   document.getElementById('bannerIng').textContent = fmt(totalIngresos(d));
   document.getElementById('bannerGas').textContent = fmt(totalGastos(d));
   const r = document.getElementById('bannerRes');
-  r.textContent = fmt(resultado(d));
-  r.parentElement.classList.toggle('pos', resultado(d)>=0);
-  r.parentElement.classList.toggle('neg', resultado(d)<0);
+  if(r){
+    r.textContent = fmt(resultado(d));
+    r.parentElement.classList.toggle('pos', resultado(d)>=0);
+    r.parentElement.classList.toggle('neg', resultado(d)<0);
+  }
   const cf = document.getElementById('cajaFinalCalc');
   if(cf) cf.textContent = fmt(cajaFinalCalc(d));
   refreshCaja(d);
