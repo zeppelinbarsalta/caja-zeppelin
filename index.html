@@ -497,8 +497,8 @@
   <div class="loginCard">
     <div class="lt1">CAJA ZEPPELIN</div>
     <div class="lt2">Acceso</div>
-    <label>Usuario</label>
-    <input id="liUser" type="text" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <label>DNI</label>
+    <input id="liUser" type="text" inputmode="numeric" autocomplete="username" autocapitalize="none" spellcheck="false">
     <label>Clave</label>
     <input id="liPass" type="password" autocomplete="current-password">
     <button id="liBtn">Ingresar</button>
@@ -1929,10 +1929,40 @@ const LS_ADMIN = 'zc_admin_v1';
 const LS_CLOUD = 'zc_cloud_v1';
 
 // Config de nube: dejala vacia y cargala desde Equipo > Nube, o hardcodeala aca.
-const CLOUD_DEFAULT = { url:'https://script.google.com/macros/s/AKfycbwOOfhF8X8-Aori_hF6GlyNUnHEOGa98Xxv5pOPYTkHgLc9n9c0Var2zd7f554q9Hq7/exec', token:'camila204' };
-let CLOUD = Object.assign({}, CLOUD_DEFAULT, loadJSON(LS_CLOUD, {}));
-function saveCloud(){ saveJSON(LS_CLOUD, {url:CLOUD.url, token:CLOUD.token}); }
-if(!CLOUD.url){ CLOUD.url = CLOUD_DEFAULT.url; CLOUD.token = CLOUD_DEFAULT.token; saveCloud(); }
+const CLOUD_DEFAULT = { url:'https://script.google.com/macros/s/AKfycbwOOfhF8X8-Aori_hF6GlyNUnHEOGa98Xxv5pOPYTkHgLc9n9c0Var2zd7f554q9Hq7/exec' };
+let CLOUD = { url: CLOUD_DEFAULT.url };
+try{ localStorage.removeItem(LS_CLOUD); }catch(e){}   // la clave vieja ya no se usa
+function saveCloud(){}
+
+/* ---- Sesión única de zeppelin-bar.com (sistema de Accesos) ---- */
+const ACCESOS_URL = 'https://script.google.com/macros/s/AKfycbyRC8Y2pb1eU7g8nvEmMrTIVS5V23YVa3Hcj6z77jS3UkWVWxiRInAhFJuaD3tnDGv8/exec';
+const LS_SES = 'zpp_sesion';
+let SES = null;   // {token, usuario:{dni,nombre,apellido,rol,accesos}}
+function sesGet(){ try{ return JSON.parse(localStorage.getItem(LS_SES)||'null'); }catch(e){ return null; } }
+function sesSet(v){ try{ v ? localStorage.setItem(LS_SES, JSON.stringify(v)) : localStorage.removeItem(LS_SES); }catch(e){} }
+function sesAcc(){ return (SES && SES.usuario && SES.usuario.accesos) || []; }
+function esTotal(){ return sesAcc().includes('caja_total'); }
+function tieneCaja(acc){ return acc.includes('caja') || acc.includes('caja_total'); }
+function tokenVigente(t){ try{ const p=JSON.parse(atob(String(t).split('.')[0].replace(/-/g,'+').replace(/_/g,'/'))); return p && p.e > Date.now(); }catch(e){ return false; } }
+function fechasHoy(){ const t=todayStr(); return [t, addDays(t,-1)]; }
+function fechaPermitida(f){ return esTotal() || fechasHoy().includes(f); }
+async function cajaApi(body){
+  const r = await fetch(CLOUD.url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(Object.assign({token: SES && SES.token}, body))});
+  const j = await r.json();
+  if(j && !j.ok && j.error==='sesion'){ sesionVencida(); throw new Error('sesion'); }
+  return j;
+}
+function sesionVencida(){
+  const eraHoy = SES && !esTotal();
+  SES = null; sesSet(null); currentUser = null;
+  if(eraHoy) purgarLocal();
+  showLogin(); const e=document.getElementById('liErr'); if(e) e.textContent='Tu sesi\u00f3n venci\u00f3. Volv\u00e9 a ingresar.';
+}
+function purgarLocal(){
+  DAYS = {}; CTAS = []; ADMIN = {}; USERS = {};
+  ['zc_days_v1','zc_ctas_v1','zc_admin_v1','zc_users_v1','zc_days_safety','zc_cloud_v1','zc_updated'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
+  try{ indexedDB.deleteDatabase('zc_backups'); }catch(e){}
+}
 
 let USERS = loadJSON(LS_USERS, null);
 let ADMIN = loadJSON(LS_ADMIN, {});   // { 'YYYY-MM': [ {dia, concepto, detalle, bucket, tipo, monto} ] }
@@ -1964,9 +1994,8 @@ function bucketName(b){ const f = BUCKETS.find(x=>x[0]===b); return f?f[1]:b; }
 function hashPass(s){ let h=5381; s=String(s); for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))>>>0; return h.toString(36); }
 function ensureUsers(){
   if(!USERS) USERS = {};
-  if(!USERS.admin) USERS.admin = { role:'admin', pass:hashPass('zeppelin'), tabs: ALL_TABS.slice() };
-  USERS.admin.role = 'admin'; USERS.admin.tabs = ALL_TABS.slice();
-  saveJSON(LS_USERS, USERS);
+  // los usuarios ahora se administran en zeppelin-bar.com/accesos (este objeto queda solo por compatibilidad)
+  if(USERS.admin) delete USERS.admin;
 }
 ensureUsers();
 const LS_THEME = 'zc_theme';
@@ -1991,6 +2020,11 @@ function setLocalUpdatedAt(t){ saveJSON('zc_updated', t || Date.now()); }
 function buildStore(){ return { config:CONFIG, days:DAYS, ctas:CTAS, users:USERS, admin:ADMIN, updatedAt: localUpdatedAt() || Date.now() }; }
 function adoptStore(remote){
   if(remote.config){ CONFIG = remote.config; saveJSON(LS_CONFIG, CONFIG); }
+  if(remote.alcance === 'hoy'){
+    DAYS = remote.days || {}; saveJSON(LS_DAYS, DAYS);
+    CTAS = []; ADMIN = {};
+    return;
+  }
   if(remote.days){
     try{ if(DAYS && Object.keys(DAYS).length) localStorage.setItem('zc_days_safety', JSON.stringify({ts:Date.now(), days:DAYS})); }catch(e){}
     DAYS = Object.assign({}, DAYS, remote.days);   // base local + la nube gana conflictos; conserva días que solo estén en local
@@ -2009,9 +2043,15 @@ async function cloudPull(){
   if(!cloudEnabled()){ setCloudStatus('off'); return; }
   setCloudStatus('sync');
   try{
-    const r = await fetch(CLOUD.url + '?token=' + encodeURIComponent(CLOUD.token), {method:'GET'});
-    const j = await r.json();
+    if(!SES) return;
+    const j = await cajaApi({action:'leer'});
     if(!j || !j.ok) throw new Error('auth');
+    if(j.alcance === 'hoy'){
+      const remote = JSON.parse(j.data || '{}'); remote.alcance = 'hoy';
+      adoptStore(remote);
+      if(currentTab) switchTab(currentTab);
+      setCloudStatus('cloud'); return;
+    }
     if(j.data){
       const remote = JSON.parse(j.data);
       if(remote){
@@ -2019,7 +2059,7 @@ async function cloudPull(){
         const localConDatos = DAYS && Object.keys(DAYS).length > 0;
         if(rT >= lT || !localConDatos){
           adoptStore(remote); setLocalUpdatedAt(rT || Date.now());
-          if(currentUser){ if(USERS[currentUser.name]){ setCurrent(currentUser.name); applyPermissions(); } else { logout(); return; } }
+          if(currentUser) applyPermissions();
           if(currentTab) switchTab(currentTab);
         } else {
           // la nube es MÁS VIEJA que lo local: no pisar. Conservar lo local, sumar días que solo estén en la nube, y volver a subir.
@@ -2040,7 +2080,14 @@ function cloudPush(now){
   const doPush = async ()=>{
     setCloudStatus('sync');
     try{
-      await fetch(CLOUD.url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({token:CLOUD.token, data: JSON.stringify(buildStore())})});
+      if(!SES) return;
+      let j;
+      if(esTotal()) j = await cajaApi({action:'guardar_todo', data: JSON.stringify(buildStore())});
+      else {
+        if(!fechaPermitida(currentDate)){ setCloudStatus('cloud'); return; }
+        j = await cajaApi({action:'guardar_dia', fecha: currentDate, dia: DAYS[currentDate] || null, transfCols: CONFIG.transfCols});
+      }
+      if(!j || !j.ok) throw new Error(j && j.error);
       setCloudStatus('cloud');
     }catch(e){ setCloudStatus('offline'); }
   };
@@ -2437,26 +2484,47 @@ function showLogin(){
   document.getElementById('liUser').focus();
 }
 async function doLogin(){
-  const name = document.getElementById('liUser').value.trim();
+  const dni = document.getElementById('liUser').value.replace(/\D/g,'');
   const pass = document.getElementById('liPass').value;
   const errEl = document.getElementById('liErr');
   const btn = document.getElementById('liBtn');
   errEl.textContent = '';
-  // traer los usuarios/datos mas recientes de la nube antes de validar
-  if(cloudEnabled()){
-    errEl.textContent = 'Sincronizando\u2026'; if(btn){ btn.disabled = true; }
-    try{
-      const r = await fetch(CLOUD.url + '?token=' + encodeURIComponent(CLOUD.token), {method:'GET'});
-      const j = await r.json();
-      if(j && j.ok && j.data){ const remote = JSON.parse(j.data); if(remote) adoptStore(remote); }
-    }catch(e){}
-    if(btn){ btn.disabled = false; } errEl.textContent = '';
-  }
-  const u = USERS[name];
-  if(!u || u.pass !== hashPass(pass)){ errEl.textContent = 'Usuario o clave incorrectos'; return; }
-  setCurrent(name); sessionStorage.setItem(AUTH_KEY, name); enterApp();
+  if(!dni || !pass){ errEl.textContent = 'Ingres\u00e1 DNI y clave'; return; }
+  if(btn) btn.disabled = true; errEl.textContent = 'Verificando\u2026';
+  try{
+    const r = await fetch(ACCESOS_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({action:'login', dni, pass})});
+    const j = await r.json();
+    if(!j || !j.ok){ errEl.textContent = (j && j.error) || 'No se pudo ingresar'; return; }
+    if(!tieneCaja(j.usuario.accesos||[])){ errEl.textContent = 'No ten\u00e9s acceso a la Caja'; return; }
+    const prev = sesGet(); const cambioUsuario = !prev || !prev.usuario || prev.usuario.dni !== j.usuario.dni;
+    SES = { token: j.token, usuario: j.usuario }; sesSet(SES);
+    if(cambioUsuario){ saveJSON('zc_updated', 0); if(!esTotal()) purgarLocal(); }   // otro usuario en este equipo: la nube manda
+    errEl.textContent = '';
+    await iniciarSesion();
+  }catch(e){ errEl.textContent = 'No se pudo conectar'; }
+  finally{ if(btn) btn.disabled = false; }
 }
-function logout(){ currentUser = null; sessionStorage.removeItem(AUTH_KEY); showLogin(); }
+function setCurrentFromSes(){
+  const u = SES.usuario;
+  currentUser = { name: ((u.nombre||'')+' '+(u.apellido||'')).trim() || u.dni, dni:u.dni, role: esTotal()?'admin':'user', tabs: esTotal()? ALL_TABS.slice() : ['hoy'] };
+}
+async function iniciarSesion(){
+  setCurrentFromSes();
+  if(!esTotal()){ purgarLocalSiHayHistoria(); currentDate = todayStr(); dateInput.value = currentDate; }
+  enterApp();
+  await cloudPull();
+}
+function purgarLocalSiHayHistoria(){
+  // un usuario "solo Hoy" no debe tener en el equipo días fuera de hoy/ayer
+  const ok = fechasHoy(); const extra = Object.keys(DAYS).some(k=>!ok.includes(k));
+  if(extra || CTAS.length || Object.keys(ADMIN||{}).length) purgarLocal();
+}
+function logout(){
+  const eraHoy = SES && !esTotal();
+  currentUser = null; SES = null; sesSet(null); sessionStorage.removeItem(AUTH_KEY);
+  if(eraHoy) purgarLocal();
+  showLogin();
+}
 const ASIST_URL = 'https://script.google.com/macros/s/AKfycby5KUw7KKL1WYv95fA3VbfNNPbOgJiakDjDEB_L1gR59XNMZKBGyassvPNbkc4I3q1o/exec';
 const ASIST_TOKEN = 'zpp-caja-7Q4';
 function normNom(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim(); }
@@ -2491,6 +2559,7 @@ function idbPut(o){ return idbOpen().then(db=>new Promise((res,rej)=>{ const tx=
 function idbAll(){ return idbOpen().then(db=>new Promise((res,rej)=>{ const tx=db.transaction(IDB_STORE,'readonly'); const q=tx.objectStore(IDB_STORE).getAll(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>rej(q.error); })); }
 function idbDel(ts){ return idbOpen().then(db=>new Promise((res)=>{ const tx=db.transaction(IDB_STORE,'readwrite'); tx.objectStore(IDB_STORE).delete(ts); tx.oncomplete=()=>res(); tx.onerror=()=>res(); })); }
 async function backupLocal(forzar){
+  if(!esTotal()) return;
   try{
     const lu = localUpdatedAt();
     if(!forzar && lu && lu <= lastBackupAt) return;
@@ -2540,64 +2609,19 @@ function applyPermissions(){
 
 /* ---- Segmento Usuarios (dentro de Equipo, solo admin) ---- */
 function renderUsersSeg(body){
-  const rows = Object.keys(USERS).map(name=>{
-    const u = USERS[name];
-    const tabs = u.role==='admin' ? 'Todas' : (u.tabs.map(t=>TAB_NAMES[t]).join(', ') || '\u2014');
-    return `<div class="usr-row"><div><b>${escAttr(name)}</b><div class="adm-det">${u.role==='admin'?'Administrador':'Usuario'} \u00b7 ${tabs}</div></div>${name==='admin'?'':`<button class="del" data-deluser="${escAttr(name)}">\u2715</button>`}</div>`;
-  }).join('');
   body.innerHTML = `
     <div class="breakdown"><h3>Usuarios y accesos</h3>
-      <p class="admin-hint">El administrador ve todo. Los dem\u00e1s acceden solo a las pesta\u00f1as que les habilites. La pesta\u00f1a Equipo/Ajustes es exclusiva del admin.</p>
-      ${rows}
-    </div>
-    <div class="breakdown" style="margin-top:12px"><h3>Agregar usuario</h3>
-      <label class="fld">Usuario</label>
-      <input id="uName" class="cfg-input" type="text" placeholder="nombre" autocapitalize="none" spellcheck="false">
-      <label class="fld" style="margin-top:8px">Clave</label>
-      <input id="uPass" class="cfg-input" type="text" placeholder="clave">
-      <div class="uTabsWrap">${ASSIGNABLE_TABS.map(t=>`<label class="uTab"><input type="checkbox" value="${t}">${TAB_NAMES[t]}</label>`).join('')}</div>
-      <button class="add-btn" id="uAdd">+ Agregar usuario</button>
-    </div>
-    <div class="breakdown" style="margin-top:12px"><h3>Clave del administrador</h3>
-      <input id="adminPass" class="cfg-input" type="text" placeholder="nueva clave admin">
-      <button class="add-btn" id="uSetAdmin">Guardar clave</button>
-    </div>
-  `;
-  body.querySelectorAll('[data-deluser]').forEach(btn=>btn.addEventListener('click', ()=>{
-    const name = btn.dataset.deluser;
-    if(name==='admin') return;
-    if(!confirm('\u00bfEliminar al usuario "'+name+'"?')) return;
-    delete USERS[name]; saveUsers(); renderUsersSeg(body);
-  }));
-  document.getElementById('uAdd').addEventListener('click', ()=>{
-    const name = document.getElementById('uName').value.trim();
-    const pass = document.getElementById('uPass').value;
-    if(!name){ showToast('Pon\u00e9 un nombre de usuario'); return; }
-    if(USERS[name]){ showToast('Ese usuario ya existe'); return; }
-    if(!pass){ showToast('Pon\u00e9 una clave'); return; }
-    const tabs = [...document.querySelectorAll('.uTab input:checked')].map(i=>i.value);
-    if(!tabs.length){ showToast('Marc\u00e1 al menos una pesta\u00f1a'); return; }
-    USERS[name] = { role:'user', pass:hashPass(pass), tabs };
-    saveUsers(); renderUsersSeg(body); showToast('Usuario agregado');
-  });
-  document.getElementById('uSetAdmin').addEventListener('click', ()=>{
-    const p = document.getElementById('adminPass').value;
-    if(!p){ showToast('Pon\u00e9 una clave'); return; }
-    USERS.admin.pass = hashPass(p); saveUsers(); document.getElementById('adminPass').value=''; showToast('Clave de admin actualizada');
-  });
+      <p class="admin-hint">Los usuarios, contrase\u00f1as y permisos ahora se administran en el <b>Panel de Accesos</b>, igual para todos los sistemas de Zeppelin. Ah\u00ed eleg\u00eds para cada persona <b>Caja (solo Hoy)</b> o <b>Caja completa</b>.</p>
+      <a class="add-btn" href="/accesos/" target="_blank" style="display:block;text-align:center;text-decoration:none">Abrir Panel de Accesos</a>
+    </div>`;
 }
 
 /* ---- Segmento Nube (dentro de Equipo, solo admin) ---- */
 function renderCloudSeg(body){
   body.innerHTML = `
     <div class="breakdown"><h3>Sincronizaci\u00f3n en la nube</h3>
-      <p class="admin-hint">Peg\u00e1 la URL <b>/exec</b> del Web App de Google Apps Script y la misma clave (<b>SECRET</b>) que pusiste en el Code.gs. Con esto la caja se comparte entre dispositivos. Zeppelin usa su <b>propia</b> planilla y su propio Apps Script, distintos a los del sex shop.</p>
-      <label class="fld">URL del Web App (/exec)</label>
-      <input id="cloudUrl" class="cfg-input" type="text" placeholder="https://script.google.com/macros/s/.../exec" value="${escAttr(CLOUD.url||'')}">
-      <label class="fld" style="margin-top:8px">Clave (SECRET)</label>
-      <input id="cloudToken" class="cfg-input" type="text" placeholder="la misma que en Code.gs" value="${escAttr(CLOUD.token||'')}">
+      <p class="admin-hint">La caja se sincroniza sola con la cuenta del negocio usando tu sesi\u00f3n. Ya no hay claves guardadas en este sistema.</p>
       <div class="row" style="gap:8px;margin-top:12px">
-        <button class="add-btn" id="cloudSave" style="flex:1">Guardar conexi\u00f3n</button>
         <button class="add-btn" id="cloudSync" style="flex:1">Sincronizar ahora</button>
       </div>
     </div>
@@ -2627,12 +2651,6 @@ function renderCloudSeg(body){
       </div>
     </div>
   `;
-  document.getElementById('cloudSave').addEventListener('click', ()=>{
-    CLOUD.url = document.getElementById('cloudUrl').value.trim();
-    CLOUD.token = document.getElementById('cloudToken').value.trim();
-    saveCloud(); setCloudStatus(cloudEnabled()?'cloud':'off'); showToast('Conexi\u00f3n guardada');
-    if(cloudEnabled()) cloudPull();
-  });
   document.getElementById('cloudSync').addEventListener('click', ()=>{ if(cloudEnabled()) cloudPull(); else showToast('Guard\u00e1 primero la URL'); });
   document.getElementById('cloudExport').addEventListener('click', exportBackup);
   document.getElementById('cloudImport').addEventListener('change', e=>{ if(e.target.files[0]) importBackup(e.target.files[0]); });
@@ -2662,9 +2680,13 @@ document.querySelectorAll('.navbtn').forEach(b=>b.addEventListener('click', ()=>
 
 const dateInput = document.getElementById('dateInput');
 dateInput.value = currentDate;
-dateInput.addEventListener('change', ()=>{ editingMov=-1; currentDate = dateInput.value; currentMonth = currentDate.slice(0,7); renderHoy(); });
-document.getElementById('prevDay').addEventListener('click', ()=>{ currentDate = addDays(currentDate,-1); dateInput.value = currentDate; renderHoy(); });
-document.getElementById('nextDay').addEventListener('click', ()=>{ currentDate = addDays(currentDate,1); dateInput.value = currentDate; renderHoy(); });
+function irAFecha(f){
+  if(!fechaPermitida(f)){ showToast('Solo pod\u00e9s cargar hoy o ayer'); dateInput.value = currentDate; return; }
+  editingMov=-1; currentDate = f; dateInput.value = f; currentMonth = currentDate.slice(0,7); renderHoy();
+}
+dateInput.addEventListener('change', ()=>irAFecha(dateInput.value));
+document.getElementById('prevDay').addEventListener('click', ()=>irAFecha(addDays(currentDate,-1)));
+document.getElementById('nextDay').addEventListener('click', ()=>irAFecha(addDays(currentDate,1)));
 
 // ---- Auth + nube ----
 document.getElementById('liBtn').addEventListener('click', doLogin);
@@ -2694,10 +2716,11 @@ document.addEventListener('input', function(e){
 try{ new MutationObserver(function(){ formatAllNumInputs(main); }).observe(main,{childList:true,subtree:true}); }catch(_){}
 formatAllNumInputs(document);
 
-const savedUser = sessionStorage.getItem(AUTH_KEY);
-if(savedUser && USERS[savedUser] && setCurrent(savedUser)) enterApp();
-else showLogin();
-if(cloudEnabled()) cloudPull();
+(function arranque(){
+  const s = sesGet();
+  if(s && s.token && s.usuario && tieneCaja(s.usuario.accesos||[]) && tokenVigente(s.token)){ SES = s; iniciarSesion(); }
+  else showLogin();
+})();
 setInterval(()=>{ if(currentUser && currentDate===todayStr()) traerAsistenciaQR(currentDate, {silencioso:true}); }, 180000);
 setInterval(()=>{ if(currentUser) backupLocal(false); }, 600000);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden && currentUser) backupLocal(false); });
