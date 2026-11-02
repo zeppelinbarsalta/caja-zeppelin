@@ -2527,7 +2527,6 @@ function logout(){
   showLogin();
 }
 const ASIST_URL = 'https://script.google.com/macros/s/AKfycby5KUw7KKL1WYv95fA3VbfNNPbOgJiakDjDEB_L1gR59XNMZKBGyassvPNbkc4I3q1o/exec';
-const ASIST_TOKEN = 'zpp-caja-7Q4';
 function normNom(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim(); }
 function matchStaffAsist(p){
   const dni = String(p.dni||'').replace(/\D/g,'');
@@ -2539,7 +2538,8 @@ function matchStaffAsist(p){
 async function traerAsistenciaQR(fecha, opt){
   opt = opt || {};
   try{
-    const r = await fetch(ASIST_URL + '?action=caja_dia&token=' + encodeURIComponent(ASIST_TOKEN) + '&fecha=' + encodeURIComponent(fecha));
+    if(!SES || !SES.token) return;
+    const r = await fetch(ASIST_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({action:'caja_dia', token: SES.token, fecha})});
     const j = await r.json();
     if(!j || !j.ok || !Array.isArray(j.personas)){ if(!opt.silencioso) showToast('No se pudo traer la asistencia'); return; }
     const d = getDay(fecha);
