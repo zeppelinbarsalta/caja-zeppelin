@@ -1961,7 +1961,7 @@ function sesionVencida(){
 }
 function purgarLocal(){
   DAYS = {}; CTAS = []; ADMIN = {}; USERS = {};
-  ['zc_days_v1','zc_ctas_v1','zc_admin_v1','zc_users_v1','zc_days_safety','zc_cloud_v1','zc_updated'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
+  ['zc_days_v1','zc_ctas_v1','zc_admin_v1','zc_users_v1','zc_days_safety','zc_cloud_v1','zc_updated','zc_snap','zc_base'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
   try{ indexedDB.deleteDatabase('zc_backups'); }catch(e){}
 }
 
@@ -2019,6 +2019,36 @@ function cloudEnabled(){ return !!(CLOUD.url); }
 function localUpdatedAt(){ return Number(loadJSON('zc_updated', 0)) || 0; }
 function setLocalUpdatedAt(t){ saveJSON('zc_updated', t || Date.now()); }
 function buildStore(){ return { config:CONFIG, days:DAYS, ctas:CTAS, users:USERS, admin:ADMIN, updatedAt: localUpdatedAt() || Date.now() }; }
+/* ---- Protección contra equipos desactualizados (nov 2026) ----
+   zc_base: versión de la nube con la que este equipo está al día.
+   zc_snap: huella de cada día/sección tal como estaba en la nube.
+   Solo lo que ESTE equipo cambió desde entonces se sube por encima de la nube;
+   el resto siempre lo manda la nube. Si la nube cambió mientras tanto,
+   el servidor rechaza (conflicto) y el equipo combina y reintenta. */
+function baseGet(){ return Number(loadJSON('zc_base', 0)) || 0; }
+function baseSet(t){ saveJSON('zc_base', Number(t)||0); }
+function hsh(s){ let h=5381; s=String(s); for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return h; }
+function snapOf(st){ const s={d:{}}; Object.keys(st.days||{}).forEach(k=>{ s.d[k]=hsh(JSON.stringify(st.days[k])); }); ['config','ctas','users','admin'].forEach(k=>{ s[k]=hsh(JSON.stringify(st[k]==null?null:st[k])); }); return s; }
+function cambiosLocales(){
+  const s = loadJSON('zc_snap', null); if(!s || !s.d) return null;
+  const r = {days:{}, n:0};
+  Object.keys(DAYS||{}).forEach(k=>{ if(s.d[k] !== hsh(JSON.stringify(DAYS[k]))){ r.days[k]=DAYS[k]; r.n++; } });
+  const cur = {config:CONFIG, ctas:CTAS, users:USERS, admin:ADMIN};
+  ['config','ctas','users','admin'].forEach(k=>{ if(s[k] !== hsh(JSON.stringify(cur[k]==null?null:cur[k]))){ r[k]=cur[k]; r.n++; } });
+  return r;
+}
+function mergeRemote(remote){
+  const loc = cambiosLocales();
+  adoptStore(remote);
+  saveJSON('zc_snap', snapOf(remote));
+  if(!loc || !loc.n) return 0;
+  Object.keys(loc.days).forEach(k=>{ DAYS[k]=loc.days[k]; }); saveJSON(LS_DAYS, DAYS);
+  if(loc.config){ CONFIG=loc.config; saveJSON(LS_CONFIG, CONFIG); }
+  if(loc.ctas){ CTAS=loc.ctas; saveJSON(LS_CTAS, CTAS); }
+  if(loc.admin){ ADMIN=loc.admin; saveJSON(LS_ADMIN, ADMIN); }
+  if(loc.users){ USERS=loc.users; ensureUsers(); }
+  return loc.n;
+}
 function adoptStore(remote){
   if(remote.config){ CONFIG = remote.config; saveJSON(LS_CONFIG, CONFIG); }
   if(remote.alcance === 'hoy'){
@@ -2056,17 +2086,13 @@ async function cloudPull(){
     if(j.data){
       const remote = JSON.parse(j.data);
       if(remote){
-        const rT = Number(remote.updatedAt)||0, lT = localUpdatedAt();
-        const localConDatos = DAYS && Object.keys(DAYS).length > 0;
-        if(rT >= lT || !localConDatos){
-          adoptStore(remote); setLocalUpdatedAt(rT || Date.now());
-          if(currentUser) applyPermissions();
-          if(currentTab) switchTab(currentTab);
-        } else {
-          // la nube es MÁS VIEJA que lo local: no pisar. Conservar lo local, sumar días que solo estén en la nube, y volver a subir.
-          if(remote.days){ DAYS = Object.assign({}, remote.days, DAYS); saveJSON(LS_DAYS, DAYS); }
-          cloudPush(true);
-        }
+        const rT = Number(remote.updatedAt)||0;
+        // la nube manda; solo se conservan los cambios hechos en ESTE equipo desde la última sincronización
+        const n = mergeRemote(remote);
+        baseSet(rT); setLocalUpdatedAt(rT || Date.now());
+        if(currentUser) applyPermissions();
+        if(currentTab) switchTab(currentTab);
+        if(n) cloudPush(true);
       }
     } else {
       cloudPush(true); // remoto vacio: subo lo local por primera vez
@@ -2083,7 +2109,19 @@ function cloudPush(now){
     try{
       if(!SES) return;
       let j;
-      if(esTotal()) j = await cajaApi({action:'guardar_todo', data: JSON.stringify(buildStore())});
+      if(esTotal()){
+        for(let intento=0; intento<3; intento++){
+          const st = buildStore(); const data = JSON.stringify(st); const snap = snapOf(JSON.parse(data));
+          j = await cajaApi({action:'guardar_todo', base: baseGet(), data});
+          if(j && j.ok){ baseSet(j.updatedAt); setLocalUpdatedAt(j.updatedAt); saveJSON('zc_snap', snap); break; }
+          if(j && j.error==='conflicto' && j.data){
+            mergeRemote(JSON.parse(j.data)); baseSet(j.updatedAt);
+            if(currentUser) applyPermissions(); if(currentTab) switchTab(currentTab);
+            continue;
+          }
+          break;
+        }
+      }
       else {
         if(!fechaPermitida(currentDate)){ setCloudStatus('cloud'); return; }
         j = await cajaApi({action:'guardar_dia', fecha: currentDate, dia: DAYS[currentDate] || null, transfCols: CONFIG.transfCols});
@@ -2499,7 +2537,7 @@ async function doLogin(){
     if(!tieneCaja(j.usuario.accesos||[])){ errEl.textContent = 'No ten\u00e9s acceso a la Caja'; return; }
     const prev = sesGet(); const cambioUsuario = !prev || !prev.usuario || prev.usuario.dni !== j.usuario.dni;
     SES = { token: j.token, usuario: j.usuario }; sesSet(SES);
-    if(cambioUsuario){ saveJSON('zc_updated', 0); if(!esTotal()) purgarLocal(); }   // otro usuario en este equipo: la nube manda
+    if(cambioUsuario){ saveJSON('zc_updated', 0); try{ localStorage.removeItem('zc_snap'); localStorage.removeItem('zc_base'); }catch(e){} if(!esTotal()) purgarLocal(); }   // otro usuario en este equipo: la nube manda
     errEl.textContent = '';
     await iniciarSesion();
   }catch(e){ errEl.textContent = 'No se pudo conectar'; }
