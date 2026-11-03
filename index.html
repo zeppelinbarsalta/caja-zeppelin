@@ -101,8 +101,8 @@
   .asis-cal .ac-name{text-align:left;padding:6px 10px 6px 2px;white-space:nowrap;position:sticky;left:0;background:var(--surface);z-index:2;min-width:132px;font-size:13px}
   .asis-cal thead .ac-name{z-index:3}
   .asis-cal .ac-name span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-left:6px}
-  .asis-cal .ac-tot{padding:0 8px;font-weight:700;color:var(--muted);min-width:46px;width:46px;position:sticky;right:96px;background:var(--surface);z-index:2;text-align:center}
-  .asis-cal .ac-imp{padding:0 10px;font-weight:700;color:var(--gold);min-width:96px;width:96px;position:sticky;right:0;background:var(--surface);z-index:2;text-align:right;font-size:12px}
+  .asis-cal .ac-tot{padding:0 8px;font-weight:700;color:var(--muted);min-width:46px;width:46px;background:var(--surface);text-align:center}
+  .asis-cal .ac-imp{padding:0 10px;font-weight:700;color:var(--gold);min-width:96px;width:96px;background:var(--surface);text-align:right;font-size:12px}
   .asis-cal thead .ac-tot, .asis-cal thead .ac-imp{z-index:3}
   .transf-meta{display:flex;flex-direction:column;justify-content:center;min-width:60px;flex:0 0 auto;line-height:1.2}
   .transf-hora{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted)}
@@ -1616,7 +1616,7 @@ function renderResumen(){
       const WD = ['D','L','M','X','J','V','S'];
       const meta = [];
       for(let i=1;i<=nDays;i++){ const k = currentMonth+'-'+String(i).padStart(2,'0'); const wd=new Date(_p[0],_p[1]-1,i).getDay(); meta.push({k, dn:i, wd:WD[wd], wknd:(wd===0||wd===6)}); }
-      const rows = staff.map(s=>{ let count=0, importe=0; meta.forEach(m=>{ const dd=DAYS[m.k]; const pp = dd && dd.personal && dd.personal[s.id]; if(pp && pp.trabajo){ count++; importe += (typeof pp.jornal==='number' ? pp.jornal : (Number(s.jornal)||0)); } }); return {s, count, importe}; }).sort((a,b)=>b.count-a.count);
+      const rows = staff.map(s=>{ let count=0, importe=0; meta.forEach(m=>{ const dd=DAYS[m.k]; const pp = dd && dd.personal && dd.personal[s.id]; if(pp && pp.trabajo){ count++; importe += (typeof pp.jornal==='number' ? pp.jornal : (Number(s.jornal)||0)); } }); return {s, count, importe}; }).sort((a,b)=>String(a.s.name||'').localeCompare(String(b.s.name||''),'es',{sensitivity:'base'}));
       const head = meta.map(m=>`<th class="${m.wknd?'wknd':''}"><span class="ac-wd">${m.wd}</span><span class="ac-dn">${m.dn}</span></th>`).join('');
       const body = rows.map(r=>{
         const cells = meta.map(m=>{ const dd=DAYS[m.k]; const on = dd && dd.personal && dd.personal[r.s.id] && dd.personal[r.s.id].trabajo; return `<td class="${on?'on':''}${m.wknd?' wknd':''}" data-asis-staff="${escAttr(r.s.id)}" data-asis-day="${m.k}"></td>`; }).join('');
