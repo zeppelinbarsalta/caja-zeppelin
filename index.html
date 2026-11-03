@@ -2101,10 +2101,14 @@ async function cloudPull(){
   }catch(e){ setCloudStatus('offline'); }
 }
 function scheduleCloudPush(){ setLocalUpdatedAt(Date.now()); if(cloudEnabled()) cloudPush(false); }
+let pushEnCurso = false, pushPendiente = false, pushReintento = null;
 function cloudPush(now){
   if(!cloudEnabled()) return;
   clearTimeout(cloudPushTimer);
   const doPush = async ()=>{
+    // de a un guardado por vez: si llega otro cambio mientras se guarda, se sube al terminar
+    if(pushEnCurso){ pushPendiente = true; return; }
+    pushEnCurso = true; clearTimeout(pushReintento);
     setCloudStatus('sync');
     try{
       if(!SES) return;
@@ -2126,9 +2130,17 @@ function cloudPush(now){
         if(!fechaPermitida(currentDate)){ setCloudStatus('cloud'); return; }
         j = await cajaApi({action:'guardar_dia', fecha: currentDate, dia: DAYS[currentDate] || null, transfCols: CONFIG.transfCols});
       }
-      if(!j || !j.ok) throw new Error(j && j.error);
+      if(!j || !j.ok){ const er = new Error((j && j.error) || 'sin respuesta'); er.code = j && j.error; throw er; }
       setCloudStatus('cloud');
-    }catch(e){ setCloudStatus('offline'); }
+    }catch(e){
+      setCloudStatus('offline');
+      const el = document.getElementById('cloudStatus'); if(el) el.title = 'No se pudo guardar: ' + (e && e.message || 'error');
+      if(e && e.code === 'version'){ showToast('Hay una versi\u00f3n nueva de la Caja: recarg\u00e1 la p\u00e1gina'); }
+      else if(e && e.message !== 'sesion'){ pushReintento = setTimeout(()=>cloudPush(true), 15000); }   // reintenta solo
+    }finally{
+      pushEnCurso = false;
+      if(pushPendiente){ pushPendiente = false; cloudPush(true); }
+    }
   };
   if(now) doPush(); else cloudPushTimer = setTimeout(doPush, 900);
 }
