@@ -1896,6 +1896,7 @@ function renderEquipoBody(){
       if(CONFIG.impuestos.includes(nm)){ showToast('Ese ítem ya existe'); return; }
       CONFIG.impuestos.push(nm); CONFIG.impBucket[nm] = bk; saveConfig(); renderEquipoBody();
     });
+  } else if(equipoSeg==='mercaderia' && PROV_UNI){ renderMercaderiaRO(body);
   } else {
     const list = CONFIG[equipoSeg];
     body.innerHTML = `
@@ -2050,7 +2051,7 @@ function mergeRemote(remote){
   return loc.n;
 }
 function adoptStore(remote){
-  if(remote.config){ CONFIG = remote.config; saveJSON(LS_CONFIG, CONFIG); }
+  if(remote.config){ CONFIG = remote.config; saveJSON(LS_CONFIG, CONFIG); aplicarProveedoresCaja(); }
   if(remote.alcance === 'hoy'){
     DAYS = remote.days || {}; saveJSON(LS_DAYS, DAYS);
     CTAS = []; ADMIN = {};
@@ -2564,6 +2565,7 @@ async function iniciarSesion(){
   if(!esTotal()){ purgarLocalSiHayHistoria(); currentDate = todayStr(); dateInput.value = currentDate; }
   enterApp();
   await cloudPull();
+  syncProveedoresCaja();
 }
 function purgarLocalSiHayHistoria(){
   // un usuario "solo Hoy" no debe tener en el equipo días fuera de hoy/ayer
@@ -2775,6 +2777,38 @@ formatAllNumInputs(document);
 setInterval(()=>{ if(currentUser && currentDate===todayStr()) traerAsistenciaQR(currentDate, {silencioso:true}); }, 180000);
 setInterval(()=>{ if(currentUser) backupLocal(false); }, 600000);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden && currentUser) backupLocal(false); });
+
+/* ===== Proveedores: fuente única (zeppelin-bar.com/proveedores) =====
+   Las opciones de "Mercadería" son los proveedores activos del bar en /proveedores.
+   Los egresos viejos conservan el nombre con el que se cargaron. */
+var PROV_URL='https://script.google.com/macros/s/AKfycbww3YDOpbsU-YjTmxzGwZZFswKt7Odavmx4O0kP8cOBrAbYHShu8jSGsG8bhqemY89c/exec';
+var LS_PROVCAJA='zc_proveedores_v1';
+var PROV_UNI=null; try{ PROV_UNI=JSON.parse(localStorage.getItem(LS_PROVCAJA)||'null'); }catch(e){ PROV_UNI=null; }
+var provEstado = PROV_UNI ? 'cache' : 'sin';
+function aplicarProveedoresCaja(){
+  if(!PROV_UNI || !Array.isArray(PROV_UNI.nombres) || !PROV_UNI.nombres.length || !CONFIG) return;
+  const lista=PROV_UNI.nombres.slice();
+  if(JSON.stringify(CONFIG.mercaderia)!==JSON.stringify(lista)){ CONFIG.mercaderia=lista; saveJSON(LS_CONFIG, CONFIG); }
+}
+async function syncProveedoresCaja(){
+  if(!SES||!SES.token) return;
+  try{
+    const r=await fetch(PROV_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:SES.token,action:'listar',negocio:'zeppelin'})});
+    const j=await r.json();
+    if(!j||!j.ok||!Array.isArray(j.data)) throw new Error((j&&j.error)||'respuesta');
+    const nombres=j.data.map(p=>p.nombre).filter(Boolean).sort((a,b)=>a.localeCompare(b,'es'));
+    if(!nombres.length) return;
+    PROV_UNI={nombres, ts:Date.now()}; try{ localStorage.setItem(LS_PROVCAJA, JSON.stringify(PROV_UNI)); }catch(e){}
+    provEstado='ok';
+    aplicarProveedoresCaja();
+    if(currentTab) switchTab(currentTab);
+  }catch(e){ provEstado='error'; }
+}
+function renderMercaderiaRO(body){
+  const l=(CONFIG.mercaderia||[]);
+  body.innerHTML = `<div class="breakdown"><div style="padding:10px 4px 14px;color:var(--muted);font-size:13px;line-height:1.5">Los proveedores de mercadería salen de <a href="/proveedores/" target="_blank" style="color:var(--orange);font-weight:600">zeppelin-bar.com/proveedores</a> (fuente única). Para agregar, renombrar o dar de baja uno, hacelo ahí. Los egresos ya cargados conservan su nombre.${provEstado==='error'?' <b style="color:var(--red)">No se pudo actualizar: se muestra la última copia.</b>':''}</div>${l.map(n=>`<div class="row"><span style="flex:1">${escAttr(n)}</span></div>`).join('')}</div>`;
+}
+aplicarProveedoresCaja();
 </script>
 </body>
 </html>
