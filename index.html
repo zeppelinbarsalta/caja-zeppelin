@@ -1955,14 +1955,13 @@ async function cajaApi(body){
   return j;
 }
 function sesionVencida(){
-  const eraHoy = SES && !esTotal();
+  // no se borra nada del equipo: lo que no se subió se combina y sube al volver a ingresar
   SES = null; sesSet(null); currentUser = null;
-  if(eraHoy) purgarLocal();
   showLogin(); const e=document.getElementById('liErr'); if(e) e.textContent='Tu sesi\u00f3n venci\u00f3. Volv\u00e9 a ingresar.';
 }
 function purgarLocal(){
   DAYS = {}; CTAS = []; ADMIN = {}; USERS = {};
-  ['zc_days_v1','zc_ctas_v1','zc_admin_v1','zc_users_v1','zc_days_safety','zc_cloud_v1','zc_updated','zc_snap','zc_base'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
+  ['zc_days_v1','zc_ctas_v1','zc_admin_v1','zc_users_v1','zc_days_safety','zc_cloud_v1','zc_updated','zc_snap','zc_base','zc_base_days'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
   try{ indexedDB.deleteDatabase('zc_backups'); }catch(e){}
 }
 
@@ -2030,6 +2029,53 @@ function baseGet(){ return Number(loadJSON('zc_base', 0)) || 0; }
 function baseSet(t){ saveJSON('zc_base', Number(t)||0); }
 function hsh(s){ let h=5381; s=String(s); for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return h; }
 function snapOf(st){ const s={d:{}}; Object.keys(st.days||{}).forEach(k=>{ s.d[k]=hsh(JSON.stringify(st.days[k])); }); ['config','ctas','users','admin'].forEach(k=>{ s[k]=hsh(JSON.stringify(st[k]==null?null:st[k])); }); return s; }
+/* ---- Combinación segura por movimiento (nov 2026) ----
+   zc_base_days: copia de cada día tal como estaba en la nube la última vez que este equipo sincronizó.
+   Al combinar se hace un merge de 3 vías (base / este equipo / nube):
+   - solo se aplica lo que ESTE equipo cambió respecto de la base, campo por campo;
+   - los movimientos/transferencias se suman o quitan de a uno (nunca se reemplaza la lista entera);
+   - un día vacío de este equipo NUNCA pisa un día con datos en la nube. */
+const LS_BASEDAYS = 'zc_base_days';
+function baseDaysGet(){ return loadJSON(LS_BASEDAYS, null); }
+function baseDaysSet(d){ try{ localStorage.setItem(LS_BASEDAYS, JSON.stringify(d||{})); }catch(e){} }
+function tieneDatos(v){
+  if(v==null) return false;
+  if(typeof v==='number') return v!==0;
+  if(typeof v==='string') return v.trim()!=='';
+  if(typeof v==='boolean') return v;
+  if(Array.isArray(v)) return v.some(tieneDatos);
+  if(typeof v==='object') return Object.keys(v).some(k=>k!=='_mv2' && tieneDatos(v[k]));
+  return false;
+}
+function _esObj(x){ return x && typeof x==='object' && !Array.isArray(x); }
+function _arr3(b, l, r){
+  const key = x=>JSON.stringify(x), cnt = a=>{ const m=new Map(); (a||[]).forEach(x=>{ const k=key(x); m.set(k,(m.get(k)||0)+1); }); return m; };
+  const cb=cnt(b), cl=cnt(l), out=(r||[]).slice();
+  cb.forEach((n,k)=>{ let quitar = n-(cl.get(k)||0); for(let i=out.length-1;i>=0 && quitar>0;i--){ if(key(out[i])===k){ out.splice(i,1); quitar--; } } });
+  const usado=new Map();
+  (l||[]).forEach(x=>{ const k=key(x); const u=(usado.get(k)||0)+1; usado.set(k,u); if(u>(cb.get(k)||0)) out.push(x); });
+  return out;
+}
+function _merge3(b, l, r){
+  const jb=JSON.stringify(b), jl=JSON.stringify(l), jr=JSON.stringify(r);
+  if(jl===jb || jl===jr) return r===undefined ? l : r;
+  if(jr===jb || r===undefined) return l;
+  if(Array.isArray(l) && Array.isArray(r)) return _arr3(Array.isArray(b)?b:[], l, r);
+  if(_esObj(l) && _esObj(r)){
+    const bb=_esObj(b)?b:{}, o={};
+    new Set([...Object.keys(r), ...Object.keys(l)]).forEach(k=>{
+      if(!(k in l) && (k in bb)) return;            // este equipo lo borró
+      const v=_merge3(bb[k], l[k], r[k]); if(v!==undefined) o[k]=v;
+    });
+    return o;
+  }
+  return l;   // mismo campo cambiado en los dos lados: gana el cambio más nuevo (este equipo)
+}
+function mergeDia(base, loc, rem){
+  if(!tieneDatos(loc)) return rem || loc;          // un día vacío nunca pisa a la nube
+  if(!rem || !tieneDatos(rem)) return loc;
+  return _merge3(base || blankDay(), loc, rem);
+}
 function cambiosLocales(){
   const s = loadJSON('zc_snap', null); if(!s || !s.d) return null;
   const r = {days:{}, n:0};
@@ -2040,15 +2086,23 @@ function cambiosLocales(){
 }
 function mergeRemote(remote){
   const loc = cambiosLocales();
+  const base = baseDaysGet() || {};
   adoptStore(remote);
-  saveJSON('zc_snap', snapOf(remote));
+  saveJSON('zc_snap', snapOf(remote)); baseDaysSet(remote.days);
   if(!loc || !loc.n) return 0;
-  Object.keys(loc.days).forEach(k=>{ DAYS[k]=loc.days[k]; }); saveJSON(LS_DAYS, DAYS);
+  let n = 0;
+  Object.keys(loc.days).forEach(k=>{
+    const rem = remote.days && remote.days[k];
+    const m = mergeDia(base[k], loc.days[k], rem);
+    if(JSON.stringify(m) !== JSON.stringify(rem)){ DAYS[k]=m; n++; } else if(rem) DAYS[k]=rem;
+  });
+  saveJSON(LS_DAYS, DAYS);
+  ['config','ctas','admin','users'].forEach(k=>{ if(loc[k]) n++; });
   if(loc.config){ CONFIG=loc.config; saveJSON(LS_CONFIG, CONFIG); }
   if(loc.ctas){ CTAS=loc.ctas; saveJSON(LS_CTAS, CTAS); }
   if(loc.admin){ ADMIN=loc.admin; saveJSON(LS_ADMIN, ADMIN); }
   if(loc.users){ USERS=loc.users; ensureUsers(); }
-  return loc.n;
+  return n;
 }
 function adoptStore(remote){
   if(remote.config){ CONFIG = remote.config; saveJSON(LS_CONFIG, CONFIG); aplicarProveedoresCaja(); }
@@ -2080,9 +2134,27 @@ async function cloudPull(){
     if(!j || !j.ok) throw new Error('auth');
     if(j.alcance === 'hoy'){
       const remote = JSON.parse(j.data || '{}'); remote.alcance = 'hoy';
+      const base = baseDaysGet() || {}, prev = DAYS || {}, pend = [];
       adoptStore(remote);
+      fechasHoy().forEach(k=>{
+        const loc = prev[k]; if(!tieneDatos(loc)) return;
+        const rem = remote.days && remote.days[k];
+        if(base[k] && JSON.stringify(loc)===JSON.stringify(base[k])) return;   // sin cambios propios
+        const m = mergeDia(base[k], loc, rem);
+        if(JSON.stringify(m)!==JSON.stringify(rem)){ DAYS[k]=m; pend.push(k); }
+      });
+      saveJSON(LS_DAYS, DAYS);
+      const nb = Object.assign({}, remote.days || {}); baseDaysSet(nb);
       if(currentTab) switchTab(currentTab);
-      setCloudStatus('cloud'); return;
+      setCloudStatus('cloud');
+      for(const k of pend){
+        try{
+          const env = JSON.parse(JSON.stringify(DAYS[k]));
+          const r2 = await cajaApi({action:'guardar_dia', fecha:k, dia:env, transfCols: CONFIG.transfCols});
+          if(r2 && r2.ok){ const b = baseDaysGet() || {}; b[k] = env; baseDaysSet(b); } else setCloudStatus('offline');
+        }catch(e){ setCloudStatus('offline'); }
+      }
+      return;
     }
     if(j.data){
       const remote = JSON.parse(j.data);
@@ -2118,7 +2190,7 @@ function cloudPush(now){
         for(let intento=0; intento<3; intento++){
           const st = buildStore(); const data = JSON.stringify(st); const snap = snapOf(JSON.parse(data));
           j = await cajaApi({action:'guardar_todo', base: baseGet(), data});
-          if(j && j.ok){ baseSet(j.updatedAt); setLocalUpdatedAt(j.updatedAt); saveJSON('zc_snap', snap); break; }
+          if(j && j.ok){ baseSet(j.updatedAt); setLocalUpdatedAt(j.updatedAt); saveJSON('zc_snap', snap); baseDaysSet(st.days); break; }
           if(j && j.error==='conflicto' && j.data){
             mergeRemote(JSON.parse(j.data)); baseSet(j.updatedAt);
             if(currentUser) applyPermissions(); if(currentTab) switchTab(currentTab);
@@ -2129,7 +2201,18 @@ function cloudPush(now){
       }
       else {
         if(!fechaPermitida(currentDate)){ setCloudStatus('cloud'); return; }
-        j = await cajaApi({action:'guardar_dia', fecha: currentDate, dia: DAYS[currentDate] || null, transfCols: CONFIG.transfCols});
+        const f = currentDate;
+        if(!tieneDatos(DAYS[f])){ setCloudStatus('cloud'); return; }   // nada que subir: nunca mandar un día vacío
+        const rj = await cajaApi({action:'leer'});
+        if(rj && rj.ok && rj.data){
+          const rd = (JSON.parse(rj.data).days || {})[f];
+          const bd = (baseDaysGet() || {})[f];
+          if(rd) DAYS[f] = mergeDia(bd, DAYS[f], rd);
+          saveJSON(LS_DAYS, DAYS);
+        }
+        const enviado = JSON.parse(JSON.stringify(DAYS[f]));
+        j = await cajaApi({action:'guardar_dia', fecha: f, dia: enviado, transfCols: CONFIG.transfCols});
+        if(j && j.ok){ const b = baseDaysGet() || {}; b[f] = enviado; baseDaysSet(b); if(currentTab) switchTab(currentTab); }
       }
       if(!j || !j.ok){ const er = new Error((j && j.error) || 'sin respuesta'); er.code = j && j.error; throw er; }
       setCloudStatus('cloud');
